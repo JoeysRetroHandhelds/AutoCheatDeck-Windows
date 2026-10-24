@@ -12,6 +12,8 @@ import time
 from ctypes import wintypes
 from typing import Callable
 
+from . import log
+
 BUTTONS = {
     0x0001: "up",
     0x0002: "down",
@@ -56,9 +58,12 @@ class XINPUT_STATE(ctypes.Structure):
 def _load_xinput():
     for name in ("xinput1_4", "xinput1_3", "xinput9_1_0"):
         try:
-            return ctypes.WinDLL(name)
+            dll = ctypes.WinDLL(name)
+            log.get().info("controller: loaded %s", name)
+            return dll
         except OSError:
             continue
+    log.get().warning("controller: no XInput library found")
     return None
 
 
@@ -142,6 +147,7 @@ class Gamepad:
         self._xinput = _load_xinput()
         self._on_press = on_press
         self._connected: set[int] = set()
+        self.connected = False  # any controller seen on the last scan (read from the UI thread)
         self._last_scan = 0.0
         self._stop = threading.Event()
         self.available = self._xinput is not None
@@ -161,17 +167,31 @@ class Gamepad:
                 held |= pressed_names(pad.wButtons, pad.sThumbLX, pad.sThumbLY)
             else:
                 self._connected.discard(index)
+        connected = bool(self._connected)
+        if sorted(self._connected) != getattr(self, "_logged_slots", None):
+            self._logged_slots = sorted(self._connected)
+            log.get().info("controller: connected slots %s", self._logged_slots)
+        self.connected = connected
         return held
 
     def _run(self) -> None:
         repeater = Repeater()
         delay = IDLE_POLL
+        logged_presses = 0
+        was_ours = None
         while not self._stop.wait(delay):
             try:
                 ours, window_class = foreground_window()
+                if ours != was_ours:
+                    was_ours = ours
+                    log.get().info("controller: app %s (window class %r)",
+                                   "in front" if ours else "in background", window_class)
                 if not ours:
                     delay = IDLE_POLL
-                    repeater.update(set(), time.monotonic())  # forget buttons held when we lost focus
+                    now = time.monotonic()
+                    if now - self._last_scan >= RESCAN * 5:
+                        self._held(now)  # keep the "controller connected" status current, rarely
+                    repeater.update(set(), now)  # forget buttons held when we lost focus
                     continue
                 now = time.monotonic()
                 held = self._held(now)
@@ -182,12 +202,16 @@ class Gamepad:
                     repeater.update(held, now)
                     continue
                 for name in repeater.update(held, now):
+                    if logged_presses < 20:
+                        logged_presses += 1
+                        log.get().info("controller: press %s (window class %r)", name, window_class)
                     if window_class == DIALOG_CLASS:
                         if name in DIALOG_KEYS:
                             tap(*DIALOG_KEYS[name])
                     else:
                         self._on_press(name)
-            except Exception:  # never let a bad poll kill controller support
+            except Exception:  # never let a bad poll kill controller support, but record why
+                log.get().exception("controller: poll failed")
                 time.sleep(1)
 
     def stop(self) -> None:

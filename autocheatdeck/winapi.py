@@ -1,15 +1,9 @@
-"""Small Win32 helpers: global hotkey, single-instance mutex, waiting on a pid."""
+"""Small Win32 helpers: single-instance mutex, showing the running copy, waiting on a pid."""
 
 import ctypes
-import threading
 from ctypes import wintypes
-from typing import Callable
 
-MOD_ALT = 0x0001
-MOD_CONTROL = 0x0002
-MOD_NOREPEAT = 0x4000
-WM_HOTKEY = 0x0312
-WM_QUIT = 0x0012
+WINDOW_TITLE = "AutoCheatDeck"
 SYNCHRONIZE = 0x00100000
 ERROR_ALREADY_EXISTS = 183
 
@@ -19,46 +13,19 @@ _kernel32.CreateMutexW.restype = wintypes.HANDLE
 _kernel32.OpenProcess.restype = wintypes.HANDLE
 
 
-class GlobalHotkey:
-    """Registers Ctrl+Alt+<key> on its own thread and calls `callback` (from that thread)."""
+def show_running_copy() -> bool:
+    """Bring the already-running app's window to the front (restoring it if minimized).
 
-    def __init__(self, key: str, callback: Callable[[], None]):
-        self._vk = ord(key.upper())
-        self._callback = callback
-        self._thread_id = 0
-        self.registered = False
-        self._ready = threading.Event()
-        threading.Thread(target=self._run, name="hotkey", daemon=True).start()
-        self._ready.wait(2)
-
-    def _run(self) -> None:
-        self._thread_id = _kernel32.GetCurrentThreadId()
-        self.registered = bool(_user32.RegisterHotKey(None, 1, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, self._vk))
-        self._ready.set()
-        if not self.registered:
-            return
-        msg = wintypes.MSG()
-        while _user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
-            if msg.message == WM_HOTKEY:
-                self._callback()
-        _user32.UnregisterHotKey(None, 1)
-
-    def stop(self) -> None:
-        if self._thread_id:
-            _user32.PostThreadMessageW(self._thread_id, WM_QUIT, 0, 0)
-
-
-def force_foreground(hwnd: int) -> None:
-    """Bring a window to the front even when another app (a game, the Xbox shell) has focus.
-
-    Windows only lets the process that received the last input take the foreground; a synthetic
-    Alt tap makes this process that one, which is the documented-in-practice workaround.
+    Called from a fresh launch, which Windows lets take the foreground, so this works even
+    over a game or the Xbox full screen experience.
     """
+    hwnd = _user32.FindWindowW(None, WINDOW_TITLE)
+    if not hwnd:
+        return False
     SW_RESTORE = 9
-    _user32.keybd_event(0x12, 0, 0, 0)
-    _user32.keybd_event(0x12, 0, 2, 0)
     _user32.ShowWindow(hwnd, SW_RESTORE)
     _user32.SetForegroundWindow(hwnd)
+    return True
 
 
 def enable_dpi_awareness() -> None:
