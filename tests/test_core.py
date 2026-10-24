@@ -91,6 +91,22 @@ class WatcherTest(unittest.TestCase):
         self.assertEqual(launched, [])
 
 
+class LaunchTest(unittest.TestCase):
+    def test_launch_trainer_passes_valid_startfile_arguments(self):
+        from autocheatdeck import app
+
+        with mock.patch.object(app.os, "startfile") as startfile:
+            app.launch_trainer(r"C:\data\trainers\1\Some Trainer.exe")
+        path, operation, arguments, cwd = startfile.call_args.args
+        self.assertEqual((operation, arguments, cwd), ("open", "", r"C:\data\trainers\1"))
+
+    def test_launch_trainer_reaches_windows(self):
+        from autocheatdeck import app
+
+        with self.assertRaises(FileNotFoundError):
+            app.launch_trainer(r"C:\definitely-missing\trainer.exe")
+
+
 class FlingTest(unittest.TestCase):
     def test_parse_pages(self):
         self.assertTrue(fling.parse_search(read_fixture("fling_search.html")))
