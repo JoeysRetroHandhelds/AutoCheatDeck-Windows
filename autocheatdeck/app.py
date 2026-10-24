@@ -28,7 +28,8 @@ class App:
         self.games: list[steam.Game] = []
         self.by_id: dict[str, steam.Game] = {}
         self._events: queue.Queue[Callable[[], None]] = queue.Queue()
-        self.exe_path = sys.executable if getattr(sys, "frozen", False) else None
+        # Updates only apply to the packaged app; None when running from source.
+        self.app_dir = config.app_dir() if getattr(sys, "frozen", False) else None
 
         root.title("AutoCheatDeck {}".format(__version__))
         # Tk sizes in pixels but fonts in points; scale pixel sizes so high-DPI screens match.
@@ -58,8 +59,8 @@ class App:
         if self.cfg.data.get("hotkey", True):
             self._start_hotkey()
 
-        if self.exe_path:
-            updater.cleanup(self.exe_path)
+        if self.app_dir:
+            updater.cleanup(self.app_dir)
         self._refresh_update_controls()
         if self.cfg.data.get("checkUpdates", True):
             self.check_app_update(quiet=True)
@@ -357,7 +358,7 @@ class App:
     def _refresh_update_controls(self, info: dict | None = None) -> None:
         for child in self.update_frame.winfo_children():
             child.destroy()
-        if self.exe_path and updater.has_backup(self.exe_path):
+        if self.app_dir and updater.has_backup(self.app_dir):
             ttk.Button(self.update_frame, text="Restore previous version", command=self.rollback).pack(
                 side="right", padx=(6, 0))
         if info and info["available"]:
@@ -387,8 +388,8 @@ class App:
             self.run_bg(lambda: updater.check(__version__), done, "Checking for updates...")
 
     def install_update(self, info: dict) -> None:
-        if not self.exe_path:
-            messagebox.showinfo("AutoCheatDeck", "Running from source; updates only apply to the exe.",
+        if not self.app_dir:
+            messagebox.showinfo("AutoCheatDeck", "Running from source; updates only apply to the packaged app.",
                                 parent=self.root)
             return
         notes = (info.get("notes") or "").strip()
@@ -397,21 +398,21 @@ class App:
             return
 
         def done(_: str) -> None:
-            updater.relaunch(self.exe_path)
+            updater.start_finisher(self.app_dir, os.getpid())
             self.quit()
 
-        self.run_bg(lambda: updater.install(self.exe_path), done, "Downloading update...")
+        self.run_bg(lambda: updater.stage_update(self.app_dir), done, "Downloading update...")
 
     def rollback(self) -> None:
         if not messagebox.askyesno("AutoCheatDeck", "Go back to the previous version? AutoCheatDeck will restart.",
                                    parent=self.root):
             return
         try:
-            updater.rollback(self.exe_path)
+            updater.stage_rollback(self.app_dir)
         except (OSError, ValueError) as e:
             messagebox.showerror("AutoCheatDeck", str(e), parent=self.root)
             return
-        updater.relaunch(self.exe_path)
+        updater.start_finisher(self.app_dir, os.getpid())
         self.quit()
 
 

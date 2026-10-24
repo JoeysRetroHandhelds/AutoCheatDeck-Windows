@@ -1,22 +1,48 @@
+import os
 import sys
 import tkinter as tk
 from tkinter import messagebox
 
-from autocheatdeck import winapi
+from autocheatdeck import updater, winapi
 from autocheatdeck.app import App
+
+
+def _take_arg(flag: str, count: int) -> list[str] | None:
+    if flag not in sys.argv:
+        return None
+    index = sys.argv.index(flag)
+    values = sys.argv[index + 1:index + 1 + count]
+    del sys.argv[index:index + 1 + count]
+    return values if len(values) == count else None
+
+
+def finish_update(wait_pid: str, app_dir: str) -> None:
+    """Runs from data/update/staging: swap this copy into app_dir, then start the app from there."""
+    winapi.wait_for_pid(int(wait_pid))
+    try:
+        updater.finish(os.path.dirname(os.path.abspath(sys.executable)), app_dir)
+    except Exception as e:  # finish() already put the old files back
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showerror("AutoCheatDeck", "Update failed, keeping the current version.\n\n{}".format(e))
+    updater.launch(os.path.join(app_dir, updater.EXE_NAME), "--after-update", str(os.getpid()))
 
 
 def main() -> None:
     winapi.enable_dpi_awareness()
 
-    # After a self-update the new exe waits for the old one to exit before taking the mutex.
-    if "--after-update" in sys.argv:
-        index = sys.argv.index("--after-update")
+    finishing = _take_arg("--finish-update", 2)
+    if finishing:
+        finish_update(*finishing)
+        return
+
+    # After an update the app waits for the updater copy to exit before taking the mutex.
+    after = _take_arg("--after-update", 1)
+    if after:
         try:
-            winapi.wait_for_pid(int(sys.argv[index + 1]))
-        except (IndexError, ValueError):
+            winapi.wait_for_pid(int(after[0]))
+        except ValueError:
             pass
-        del sys.argv[index:index + 2]
 
     if not winapi.acquire_single_instance("Local\\AutoCheatDeck-Windows"):
         root = tk.Tk()

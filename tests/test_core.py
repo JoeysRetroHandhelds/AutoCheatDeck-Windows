@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 import unittest
+import zipfile
 from unittest import mock
 
 from autocheatdeck import fling, steam, updater
@@ -106,56 +107,102 @@ class FakeResponse(io.BytesIO):
         return self._url
 
 
-EXE_URL = "https://github.com/x/releases/download/v1.1.0/AutoCheatDeck.exe"
+ZIP_URL = "https://github.com/x/releases/download/v1.1.0/AutoCheatDeck-win64.zip"
 
 
-def fake_open(payload: bytes, checksum: str):
+def make_zip(version: str, extra: dict | None = None, exe: bytes | None = None) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("AutoCheatDeck/AutoCheatDeck.exe", exe if exe is not None else b"MZ " + version.encode())
+        archive.writestr("AutoCheatDeck/_internal/lib.dll", version)
+        archive.writestr("AutoCheatDeck/README.md", version)
+        for name, data in (extra or {}).items():
+            archive.writestr(name, data)
+    return buffer.getvalue()
+
+
+def fake_open(payload: bytes, checksum: str | None = None):
+    checksum = checksum or hashlib.sha256(payload).hexdigest()
     release = {"tag_name": "v1.1.0", "assets": [
-        {"name": "AutoCheatDeck.exe", "browser_download_url": EXE_URL},
-        {"name": "AutoCheatDeck.exe.sha256", "browser_download_url": EXE_URL + ".sha256"},
+        {"name": "AutoCheatDeck-win64.zip", "browser_download_url": ZIP_URL},
+        {"name": "AutoCheatDeck-win64.zip.sha256", "browser_download_url": ZIP_URL + ".sha256"},
     ]}
-    responses = {updater.API_URL: json.dumps(release).encode(), EXE_URL: payload,
-                 EXE_URL + ".sha256": (checksum + " *AutoCheatDeck.exe\n").encode()}
+    responses = {updater.API_URL: json.dumps(release).encode(), ZIP_URL: payload,
+                 ZIP_URL + ".sha256": (checksum + " *AutoCheatDeck-win64.zip\n").encode()}
     return lambda url: FakeResponse(responses[url], url)
 
 
 class UpdaterTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.exe = os.path.join(self.tmp.name, "AutoCheatDeck.exe")
-        with open(self.exe, "wb") as f:
-            f.write(b"MZ old")
+        self.app = os.path.join(self.tmp.name, "AutoCheatDeck")
+        for name, data in {"AutoCheatDeck.exe": "MZ 1.0.0", "_internal/lib.dll": "1.0.0", "README.md": "1.0.0",
+                           "my notes.txt": "mine", "data/config.json": "{}",
+                           "data/trainers/1/t.exe": "trainer"}.items():
+            path = os.path.join(self.app, name)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                f.write(data)
 
     def tearDown(self):
         self.tmp.cleanup()
 
-    def read(self, path=None) -> bytes:
-        with open(path or self.exe, "rb") as f:
+    def read(self, *parts: str) -> str:
+        with open(os.path.join(self.app, *parts)) as f:
             return f.read()
+
+    def update_to(self, payload: bytes) -> None:
+        with mock.patch.object(updater, "_open", fake_open(payload)):
+            self.assertEqual(updater.stage_update(self.app), "v1.1.0")
+        updater.finish(updater.staging_dir(self.app), self.app)
+        updater.cleanup(self.app)
+
+    def assert_version(self, version: str) -> None:
+        self.assertEqual(self.read("AutoCheatDeck.exe"), "MZ " + version)
+        self.assertEqual(self.read("_internal", "lib.dll"), version)
 
     def test_versions(self):
         self.assertTrue(updater.is_newer("v1.0.10", "1.0.9"))
         self.assertFalse(updater.is_newer("v1.0.0", "1.0.0"))
 
-    def test_install_then_rollback_swaps_back_and_forth(self):
-        payload = b"MZ new"
-        with mock.patch.object(updater, "_open", fake_open(payload, hashlib.sha256(payload).hexdigest())):
-            self.assertEqual(updater.install(self.exe), "v1.1.0")
-        self.assertEqual(self.read(), b"MZ new")
-        self.assertEqual(self.read(updater.backup_path(self.exe)), b"MZ old")
-        self.assertEqual(sorted(os.listdir(self.tmp.name)), ["AutoCheatDeck.exe", "AutoCheatDeck.old.exe"])
+    def test_update_then_rollback_keeps_user_files(self):
+        self.update_to(make_zip("1.1.0"))
+        self.assert_version("1.1.0")
+        self.assertTrue(updater.has_backup(self.app))
+        self.assertEqual(sorted(os.listdir(updater.update_dir(self.app))), ["previous"])
 
-        updater.rollback(self.exe)
-        self.assertEqual(self.read(), b"MZ old")
-        self.assertEqual(self.read(updater.backup_path(self.exe)), b"MZ new")
+        updater.stage_rollback(self.app)
+        updater.finish(updater.staging_dir(self.app), self.app)
+        updater.cleanup(self.app)
+        self.assert_version("1.0.0")
+        self.assertEqual(updater.has_backup(self.app), True)
+        self.assertEqual(self.read("data", "update", "previous", "_internal", "lib.dll"), "1.1.0")
 
-    def test_bad_checksum_or_non_exe_leaves_exe_alone(self):
-        for payload, checksum in ((b"MZ new", "0" * 64), (b"<html>", hashlib.sha256(b"<html>").hexdigest())):
+        self.assertEqual(self.read("my notes.txt"), "mine")
+        self.assertEqual(self.read("data", "config.json"), "{}")
+        self.assertEqual(self.read("data", "trainers", "1", "t.exe"), "trainer")
+
+    def test_bad_downloads_change_nothing(self):
+        bad = [
+            (make_zip("1.1.0"), "0" * 64),
+            (make_zip("1.1.0", exe=b"<html>"), None),
+            (make_zip("1.1.0", extra={"../../escape.txt": "x"}), None),
+        ]
+        for payload, checksum in bad:
             with mock.patch.object(updater, "_open", fake_open(payload, checksum)):
                 with self.assertRaises(ValueError):
-                    updater.install(self.exe)
-            self.assertEqual(self.read(), b"MZ old")
-            self.assertEqual(os.listdir(self.tmp.name), ["AutoCheatDeck.exe"])
+                    updater.stage_update(self.app)
+            self.assert_version("1.0.0")
+            self.assertFalse(os.path.exists(updater.staging_dir(self.app)))
+
+    def test_failed_copy_restores_old_files(self):
+        with mock.patch.object(updater, "_open", fake_open(make_zip("1.1.0"))):
+            updater.stage_update(self.app)
+        with mock.patch.object(updater.shutil, "copy2", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                updater.finish(updater.staging_dir(self.app), self.app)
+        self.assert_version("1.0.0")
+        self.assertEqual(self.read("README.md"), "1.0.0")
 
 
 if __name__ == "__main__":

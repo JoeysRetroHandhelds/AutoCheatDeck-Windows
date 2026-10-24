@@ -1,24 +1,34 @@
-"""Self-update the portable exe from GitHub releases.
+"""Self-update the portable app folder from GitHub releases.
 
-A running exe can't be overwritten on Windows but it can be renamed, so an update downloads
-the new exe beside the current one, verifies its SHA-256, renames the running exe to the
-backup name and moves the new one into place. The caller then relaunches.
+The release is a zip of the whole app folder (AutoCheatDeck.exe + _internal/ + docs). Windows
+locks a running app's files, so updating is a hand-off:
+
+1. The running app downloads the zip, verifies its SHA-256 and unpacks it to data/update/staging.
+2. It starts the staged exe with --finish-update <its pid> <app dir> and exits.
+3. The staged copy waits for that pid, moves the old app files to data/update/outgoing, copies
+   itself into the app folder, keeps the old files as data/update/previous and relaunches the
+   app folder's exe. The relaunched app deletes the staging folder.
+
+Restoring the previous version stages a copy of data/update/previous and runs the same hand-off.
 """
 
 import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
-import sys
+import time
 import urllib.parse
 import urllib.request
+import zipfile
 
 from . import tls
 
 REPO = "JoeysRetroHandhelds/AutoCheatDeck-Windows"
 API_URL = "https://api.github.com/repos/{}/releases/latest".format(REPO)
-ASSET_NAME = "AutoCheatDeck.exe"
+ASSET_NAME = "AutoCheatDeck-win64.zip"
+EXE_NAME = "AutoCheatDeck.exe"
 ALLOWED_HOSTS = {
     "github.com",
     "api.github.com",
@@ -26,7 +36,9 @@ ALLOWED_HOSTS = {
     "release-assets.githubusercontent.com",
 }
 USER_AGENT = "AutoCheatDeck-Windows-Updater"
-MAX_DOWNLOAD_BYTES = 200 * 1024 * 1024
+MAX_DOWNLOAD_BYTES = 300 * 1024 * 1024
+# Never touched by an update: the user's settings and trainers (and the update area itself).
+KEEP = {"data"}
 
 
 def parse_version(value: str) -> tuple[int, ...]:
@@ -69,10 +81,43 @@ def check(current_version: str) -> dict:
             "notes": release.get("body") or ""}
 
 
-def backup_path(exe_path: str) -> str:
-    root, ext = os.path.splitext(exe_path)
-    return root + ".old" + ext
+# ---------- paths ----------
 
+def update_dir(app_dir: str) -> str:
+    return os.path.join(app_dir, "data", "update")
+
+
+def staging_dir(app_dir: str) -> str:
+    return os.path.join(update_dir(app_dir), "staging")
+
+
+def previous_dir(app_dir: str) -> str:
+    return os.path.join(update_dir(app_dir), "previous")
+
+
+def has_backup(app_dir: str) -> bool:
+    return os.path.isfile(os.path.join(previous_dir(app_dir), EXE_NAME))
+
+
+def _rmtree(path: str) -> None:
+    if os.path.isdir(path):
+        shutil.rmtree(path)
+    elif os.path.exists(path):
+        os.remove(path)
+
+
+def _retry(action, attempts: int = 20, delay: float = 0.5):
+    """Files of a just-exited process (or one antivirus is scanning) can stay locked briefly."""
+    for attempt in range(attempts):
+        try:
+            return action()
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(delay)
+
+
+# ---------- step 1: stage ----------
 
 def _download(url: str, path: str) -> str:
     digest = hashlib.sha256()
@@ -87,68 +132,113 @@ def _download(url: str, path: str) -> str:
     return digest.hexdigest()
 
 
-def install(exe_path: str, release: dict | None = None) -> str:
-    """Replace exe_path with the latest release's exe, keeping the old one as a backup."""
+def _extract_app(zip_path: str, dest: str) -> str:
+    """Extract the release zip into dest and return the folder that holds the exe."""
+    root = os.path.realpath(dest)
+    with zipfile.ZipFile(zip_path) as archive:
+        for member in archive.namelist():
+            target = os.path.realpath(os.path.join(dest, member))
+            if target != root and not target.startswith(root + os.sep):
+                raise ValueError("Unsafe path in archive: {}".format(member))
+        archive.extractall(dest)
+    for dirpath, _dirs, files in os.walk(dest):
+        if EXE_NAME in files:
+            with open(os.path.join(dirpath, EXE_NAME), "rb") as f:
+                if f.read(2) != b"MZ":
+                    raise ValueError("{} in the release is not a Windows program".format(EXE_NAME))
+            return dirpath
+    raise ValueError("Release zip does not contain {}".format(EXE_NAME))
+
+
+def stage_update(app_dir: str, release: dict | None = None) -> str:
+    """Download, verify and unpack the latest release into the staging folder. Returns its tag."""
     release = release or latest_release()
-    exe_url, sha_url = pick_assets(release)
-    new_path = exe_path + ".new"
+    zip_url, sha_url = pick_assets(release)
+    work = update_dir(app_dir)
+    os.makedirs(work, exist_ok=True)
+    zip_path = os.path.join(work, "download.zip")
+    extract = os.path.join(work, "extract")
+    staging = staging_dir(app_dir)
     try:
         with _open(sha_url) as response:
             expected = response.read().decode().split()[0].lower()
-        actual = _download(exe_url, new_path)
+        actual = _download(zip_url, zip_path)
         if actual != expected:
             raise ValueError("Checksum mismatch: expected {}, got {}".format(expected, actual))
-        with open(new_path, "rb") as f:
-            if f.read(2) != b"MZ":
-                raise ValueError("Downloaded file is not a Windows program")
-        _swap(exe_path, new_path)
+        _rmtree(extract)
+        app_root = _extract_app(zip_path, extract)
+        _rmtree(staging)
+        os.replace(app_root, staging)
     finally:
-        if os.path.exists(new_path):
-            os.remove(new_path)
+        _rmtree(zip_path)
+        _rmtree(extract)
     return release.get("tag_name", "")
 
 
-def _swap(exe_path: str, replacement: str) -> None:
-    """Move the running exe to the backup name and put replacement in its place."""
-    backup = backup_path(exe_path)
-    if os.path.exists(backup):
-        os.remove(backup)
-    os.replace(exe_path, backup)
-    try:
-        os.replace(replacement, exe_path)
-    except OSError:
-        os.replace(backup, exe_path)
-        raise
-
-
-def has_backup(exe_path: str) -> bool:
-    return os.path.isfile(backup_path(exe_path))
-
-
-def rollback(exe_path: str) -> None:
-    """Swap the backup back in; the version being replaced becomes the new backup."""
-    backup = backup_path(exe_path)
-    if not os.path.isfile(backup):
+def stage_rollback(app_dir: str) -> None:
+    if not has_backup(app_dir):
         raise ValueError("No previous version to restore")
-    staged = exe_path + ".restore"
-    os.replace(backup, staged)
+    staging = staging_dir(app_dir)
+    _rmtree(staging)
+    shutil.copytree(previous_dir(app_dir), staging)
+
+
+def start_finisher(app_dir: str, wait_pid: int) -> None:
+    """Run the staged exe so it can replace the app folder once this process exits."""
+    exe = os.path.join(staging_dir(app_dir), EXE_NAME)
+    flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    subprocess.Popen([exe, "--finish-update", str(wait_pid), app_dir], cwd=app_dir, close_fds=True,
+                     creationflags=flags)
+
+
+# ---------- step 2: swap (runs from the staged copy) ----------
+
+def finish(source_dir: str, app_dir: str) -> None:
+    """Replace the app files in app_dir with source_dir's, keeping the old ones as `previous`."""
+    incoming = [name for name in os.listdir(source_dir) if name not in KEEP]
+    if EXE_NAME not in incoming:
+        raise ValueError("Staged update is missing {}".format(EXE_NAME))
+    outgoing = os.path.join(update_dir(app_dir), "outgoing")
+    _rmtree(outgoing)
+    os.makedirs(outgoing)
+
+    # Only move what a release owns, so anything else the user keeps in the folder stays put.
+    owned = set(incoming) | {EXE_NAME, "_internal"}
+    current = [name for name in os.listdir(app_dir) if name in owned]
+    moved: list[str] = []
+    copied: list[str] = []
     try:
-        _swap(exe_path, staged)
-    except OSError:
-        if os.path.exists(staged):
-            os.replace(staged, backup)
+        for name in current:
+            _retry(lambda: os.replace(os.path.join(app_dir, name), os.path.join(outgoing, name)))
+            moved.append(name)
+        for name in incoming:
+            src, dst = os.path.join(source_dir, name), os.path.join(app_dir, name)
+            if os.path.isdir(src):
+                shutil.copytree(src, dst)
+            else:
+                shutil.copy2(src, dst)
+            copied.append(name)
+    except Exception:
+        for name in copied:
+            _rmtree(os.path.join(app_dir, name))
+        for name in moved:
+            os.replace(os.path.join(outgoing, name), os.path.join(app_dir, name))
         raise
 
+    previous = previous_dir(app_dir)
+    _rmtree(previous)
+    os.replace(outgoing, previous)
 
-def cleanup(exe_path: str) -> None:
-    for leftover in (exe_path + ".new", exe_path + ".restore"):
+
+def cleanup(app_dir: str) -> None:
+    """Remove leftovers once the app runs from its real folder again."""
+    for name in ("staging", "outgoing", "extract", "download.zip"):
         try:
-            os.remove(leftover)
+            _retry(lambda: _rmtree(os.path.join(update_dir(app_dir), name)), attempts=6)
         except OSError:
             pass
 
 
-def relaunch(exe_path: str) -> None:
+def launch(exe_path: str, *args: str) -> None:
     flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-    args = [exe_path, "--after-update", str(os.getpid()), *sys.argv[1:]]
-    subprocess.Popen(args, close_fds=True, creationflags=flags)
+    subprocess.Popen([exe_path, *args], cwd=os.path.dirname(exe_path), close_fds=True, creationflags=flags)
