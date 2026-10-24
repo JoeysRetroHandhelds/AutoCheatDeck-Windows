@@ -1,8 +1,8 @@
 """Read Xbox-style controllers through XInput (ctypes, no dependencies).
 
-Emits named button presses with key-repeat for directions. Input only reaches the app while one
-of its windows is in the foreground, so a game being played never drives the UI. Back+Start is
-the exception: it brings the app to the front from anywhere.
+Emits named button presses with key-repeat for directions. The controller is only read while
+one of the app's windows is in the foreground, so a game being played never drives the UI and the
+app costs nothing (no 60 Hz wakeups) while it sits in the background.
 """
 
 import ctypes
@@ -31,6 +31,10 @@ STICK_DEADZONE = 16000
 REPEAT_DELAY = 0.4
 REPEAT_RATE = 0.11
 POLL = 1 / 60
+# While another app is in front, only check (cheaply) whether we've come back to the front.
+IDLE_POLL = 0.5
+# XInputGetState is slow for empty slots, so look for newly connected controllers only this often.
+RESCAN = 2.0
 
 
 class XINPUT_GAMEPAD(ctypes.Structure):
@@ -132,44 +136,52 @@ DIALOG_KEYS = {
 
 
 class Gamepad:
-    """Polls XInput on a thread. `on_press(name)` runs on that thread for the app's own windows;
-    `on_summon()` runs when Back+Start is pressed anywhere."""
+    """Polls XInput on a thread while the app is in front; `on_press(name)` runs on that thread."""
 
-    def __init__(self, on_press: Callable[[str], None], on_summon: Callable[[], None]):
+    def __init__(self, on_press: Callable[[str], None]):
         self._xinput = _load_xinput()
         self._on_press = on_press
-        self._on_summon = on_summon
+        self._connected: set[int] = set()
+        self._last_scan = 0.0
         self._stop = threading.Event()
         self.available = self._xinput is not None
         if self.available:
             threading.Thread(target=self._run, name="gamepad", daemon=True).start()
 
-    def _held(self) -> set[str]:
+    def _held(self, now: float) -> set[str]:
+        slots = range(4) if now - self._last_scan >= RESCAN else sorted(self._connected)
+        if len(slots) == 4:
+            self._last_scan = now
         held: set[str] = set()
         state = XINPUT_STATE()
-        for index in range(4):
+        for index in slots:
             if self._xinput.XInputGetState(index, ctypes.byref(state)) == 0:
+                self._connected.add(index)
                 pad = state.Gamepad
                 held |= pressed_names(pad.wButtons, pad.sThumbLX, pad.sThumbLY)
+            else:
+                self._connected.discard(index)
         return held
 
     def _run(self) -> None:
         repeater = Repeater()
-        summoned = False
-        while not self._stop.wait(POLL):
+        delay = IDLE_POLL
+        while not self._stop.wait(delay):
             try:
-                held = self._held()
-                combo = {"back", "start"} <= held
-                if combo and not summoned:
-                    self._on_summon()
-                summoned = combo
-                events = repeater.update(held - {"back", "start"} if combo else held, time.monotonic())
-                if not events:
-                    continue
                 ours, window_class = foreground_window()
                 if not ours:
+                    delay = IDLE_POLL
+                    repeater.update(set(), time.monotonic())  # forget buttons held when we lost focus
                     continue
-                for name in events:
+                now = time.monotonic()
+                held = self._held(now)
+                if delay == IDLE_POLL:
+                    # Just came to the front: a button still held from switching here (e.g. A in the
+                    # Xbox shell) must not also act on the app.
+                    delay = POLL
+                    repeater.update(held, now)
+                    continue
+                for name in repeater.update(held, now):
                     if window_class == DIALOG_CLASS:
                         if name in DIALOG_KEYS:
                             tap(*DIALOG_KEYS[name])
