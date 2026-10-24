@@ -46,10 +46,10 @@ def main() -> None:
 
     background = _take_arg("--background", 0) is not None
     if not winapi.acquire_single_instance("Local\\AutoCheatDeck-Windows"):
-        if not background:  # a startup launch finding it already running stays quiet
-            root = tk.Tk()
-            root.withdraw()
-            messagebox.showinfo("AutoCheatDeck", "AutoCheatDeck is already running. Press Ctrl+Alt+T to show it.")
+        # Opening the app again is how you get back to it: show the running copy.
+        # A startup launch finding it already running stays quiet.
+        if not background:
+            winapi.show_running_copy()
         return
 
     root = tk.Tk()

@@ -22,7 +22,7 @@ def trainers_dir() -> str:
     return os.path.join(data_dir(), "trainers")
 
 
-DEFAULTS = {"games": {}, "launchDelay": 5, "hotkey": True, "checkUpdates": True}
+DEFAULTS = {"games": {}, "launchDelay": 5, "checkUpdates": True}
 
 
 class Config:

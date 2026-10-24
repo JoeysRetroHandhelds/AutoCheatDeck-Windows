@@ -7,21 +7,23 @@ A portable app that finds [FLiNG](https://flingtrainer.com) trainers for your in
 1. Download `AutoCheatDeck-win64.zip` from the [latest release](https://github.com/JoeysRetroHandhelds/AutoCheatDeck-Windows/releases/latest), unzip it anywhere and run `AutoCheatDeck\AutoCheatDeck.exe`. Settings and trainers are stored in the `data` folder inside it, so the whole folder is portable.
 2. Pick a game, press **Find trainer online**, choose the trainer and version.
 3. Start the game. The trainer launches after the delay set at the bottom (default 5 s). Trainers that need admin rights show a UAC prompt.
-4. **Ctrl+Alt+T** brings the window to the front, even over a game (it can be turned off).
+4. Opening AutoCheatDeck again (shortcut, Start menu, Xbox app) brings the running copy to the front.
 
 Games are listed most recently played first.
 
 ### Controller
 
-The whole app works with an Xbox-style controller: D-pad or left stick to move, **A** select, **B** back, **Y** find a trainer for the selected game, **X** launch its trainer, **LB/RB** page through the list. The controller is only read while AutoCheatDeck is the active window, so it never reacts to buttons pressed in a game and uses no CPU in the background.
+The whole app works with an Xbox-style controller or the keyboard (arrows, Enter, Esc, Page Up/Down): D-pad or left stick to move, **A** select, **B** back, **Y** find a trainer for the selected game, **X** launch its trainer, **LB/RB** page through the list. The controller is only read while AutoCheatDeck is the active window, so it never reacts to buttons pressed in a game and uses no CPU in the background.
 
 ### Start with Windows
 
-Tick **Start with Windows** to launch AutoCheatDeck minimized at sign-in, so trainers start with your games without opening it first. This uses your user's startup list (no admin needed) and also works with the Xbox full screen experience on handhelds; switch to it there with Windows' task switcher or Ctrl+Alt+T. If you move the folder, open the app once from its new place and it updates the startup entry.
+Tick **Start with Windows** to launch AutoCheatDeck minimized at sign-in, so trainers start with your games without opening it first. This uses your user's startup list (no admin needed) and also works with the Xbox full screen experience on handhelds; switch to it there with Windows' task switcher, or add AutoCheatDeck.exe to the Xbox app as a game and open it from there. If you move the folder, open the app once from its new place and it updates the startup entry.
 
 Updates: **Check for updates** / **Install update** downloads the new version, swaps the app files (your `data` folder is untouched) and restarts; **Restore previous version** swaps back.
 
 Trainers are third-party programs that modify game memory, and Windows Defender often flags them. Only use trainers you trust.
+
+If the controller isn't detected, the status line at the bottom says so, and `datautocheatdeck.log` records what the app saw (useful when reporting a problem).
 
 ## Develop
 

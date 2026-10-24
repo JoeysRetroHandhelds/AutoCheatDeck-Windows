@@ -9,14 +9,18 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Any, Callable
 
-from . import __version__, config, fling, processes, startup, steam, updater
+from . import __version__, config, fling, log, processes, startup, steam, updater
 from .watcher import Watcher
+from .winapi import WINDOW_TITLE
 
 FONT = ("Segoe UI", 12)
+# Keyboard keys drive the same navigation as the controller. Handhelds such as the ROG Ally send
+# these keys from their built-in controls when the controller is in "desktop" mode.
+KEYS = {"Up": "up", "Down": "down", "Left": "left", "Right": "right", "Return": "a", "KP_Enter": "a",
+        "Escape": "b", "Prior": "lb", "Next": "rb"}
 ACCENT = "#2f6fdb"
 ACCENT_SOFT = "#dbe7fb"
 TITLE_FONT = ("Segoe UI Semibold", 15)
-HOTKEY = "T"
 
 
 def launch_trainer(path: str) -> None:
@@ -28,13 +32,15 @@ class App:
     def __init__(self, root: tk.Tk, background: bool = False):
         self.root = root
         self.cfg = config.Config()
+        log.get().info("AutoCheatDeck %s starting (frozen=%s)", __version__, getattr(sys, "frozen", False))
         self.games: list[steam.Game] = []
         self.by_id: dict[str, steam.Game] = {}
         self._events: queue.Queue[Callable[[], None]] = queue.Queue()
         # Updates only apply to the packaged app; None when running from source.
         self.app_dir = config.app_dir() if getattr(sys, "frozen", False) else None
 
-        root.title("AutoCheatDeck {}".format(__version__))
+        # Fixed title: a second launch finds this window by it and brings it to the front.
+        root.title(WINDOW_TITLE)
         # Tk sizes in pixels but fonts in points; scale pixel sizes so high-DPI screens match.
         self.scale = max(1.0, root.winfo_fpixels("1i") / 96)
         root.geometry("{}x{}".format(self.px(1000), self.px(640)))
@@ -67,13 +73,12 @@ class App:
         )
         self.watcher.start()
 
-        self.hotkey = None
-        if self.cfg.data.get("hotkey", True):
-            self._start_hotkey()
-
         from .gamepad import Gamepad
 
         self.gamepad = Gamepad(on_press=lambda name: self.post(lambda: self.on_pad(name)))
+        for key in KEYS:
+            root.bind_all("<{}>".format(key), self._on_key)
+        self._refresh_controller_status()
 
         # A portable folder can move; keep the startup entry pointing at this copy.
         if self.app_dir and startup.is_enabled():
@@ -108,6 +113,7 @@ class App:
             try:
                 event()
             except Exception as e:  # one failing event must not stop the loop
+                log.get().exception("UI event failed")
                 self.set_status("Error: {}".format(e))
         self.root.after(100, self._drain_events)
 
@@ -136,8 +142,6 @@ class App:
     def quit(self) -> None:
         self.watcher.stop()
         self.gamepad.stop()
-        if self.hotkey:
-            self.hotkey.stop()
         self.root.destroy()
 
     # ---------- layout ----------
@@ -149,7 +153,8 @@ class App:
         self.search = tk.StringVar()
         self.search.trace_add("write", lambda *_: self._fill_list())
         ttk.Label(top, text="Filter:").pack(side="left", padx=(24, 6))
-        ttk.Entry(top, textvariable=self.search, width=28).pack(side="left")
+        self.filter_entry = ttk.Entry(top, textvariable=self.search, width=28)
+        self.filter_entry.pack(side="left")
         ttk.Button(top, text="Refresh", command=self.refresh_games).pack(side="left", padx=6)
 
         body = ttk.PanedWindow(self.root, orient="horizontal")
@@ -165,8 +170,7 @@ class App:
         self.tree.configure(yscrollcommand=scroll.set)
         self.tree.pack(side="left", fill="both", expand=True)
         scroll.pack(side="right", fill="y")
-        self.tree.bind("<<TreeviewSelect>>", lambda _: self._show_selected())
-        self.tree.bind("<Return>", lambda _: self.find_trainer())
+        self.tree.bind("<<TreeviewSelect>>", lambda _: self._show_selected(force=False))
         body.add(left, weight=3)
 
         self.detail = ttk.Frame(body, padding=(16, 4))
@@ -180,12 +184,9 @@ class App:
         self.delay = tk.IntVar(value=int(self.cfg.data.get("launchDelay", 5)))
         self.delay.trace_add("write", lambda *_: self._save_delay())
         ttk.Spinbox(bottom, from_=0, to=120, width=5, textvariable=self.delay).pack(side="left", padx=(6, 18))
-        self.hotkey_on = tk.BooleanVar(value=bool(self.cfg.data.get("hotkey", True)))
-        ttk.Checkbutton(bottom, text="Ctrl+Alt+{} shows this window".format(HOTKEY), variable=self.hotkey_on,
-                        command=self._toggle_hotkey).pack(side="left")
         self.startup_on = tk.BooleanVar(value=startup.is_enabled())
         ttk.Checkbutton(bottom, text="Start with Windows", variable=self.startup_on,
-                        command=self._toggle_startup).pack(side="left", padx=(18, 0))
+                        command=self._toggle_startup).pack(side="left")
 
         updates = ttk.Frame(self.root, padding=(12, 0, 12, 8))
         updates.pack(fill="x")
@@ -194,9 +195,8 @@ class App:
 
         self.status = ttk.Label(self.root, text="", padding=(12, 0, 12, 8), foreground="#555")
         self.status.pack(fill="x")
-        ttk.Label(self.root, text="Controller:  A select   B back   Y find trainer   X launch trainer   "
-                                  "LB/RB page", foreground="#777",
-                  padding=(12, 0, 12, 8)).pack(fill="x")
+        self.controller_hint = ttk.Label(self.root, text="", foreground="#777", padding=(12, 0, 12, 8))
+        self.controller_hint.pack(fill="x")
 
     def _clear_detail(self) -> None:
         for child in self.detail.winfo_children():
@@ -242,9 +242,17 @@ class App:
         selection = self.tree.selection()
         return selection[0] if selection else None
 
-    def _show_selected(self) -> None:
-        self._clear_detail()
+    def _show_selected(self, force: bool = True) -> None:
         appid = self.selected_appid()
+        # The list re-announces an unchanged selection on some keys (e.g. Right); rebuilding then
+        # would destroy the button that just received focus.
+        if not force and appid == getattr(self, "_shown_appid", None):
+            return
+        self._shown_appid = appid
+        had_focus = self.root.focus_get() in self._focusables(self.detail)
+        self._clear_detail()
+        if had_focus:
+            self.tree.focus_set()
         game = self.by_id.get(appid or "")
         if not game:
             ttk.Label(self.detail, text="Select a game", foreground="#777").pack(anchor="w", pady=20)
@@ -394,35 +402,6 @@ class App:
         self.cfg.set_game(appid, None)
         self._fill_list()
 
-    # ---------- hotkey ----------
-
-    def _start_hotkey(self) -> None:
-        from .winapi import GlobalHotkey
-
-        self.hotkey = GlobalHotkey(HOTKEY, lambda: self.post(self.bring_to_front))
-        if not self.hotkey.registered:
-            self.set_status("Ctrl+Alt+{} is used by another program".format(HOTKEY))
-
-    def _toggle_hotkey(self) -> None:
-        self.cfg.data["hotkey"] = self.hotkey_on.get()
-        self.cfg.save()
-        if self.hotkey_on.get() and not self.hotkey:
-            self._start_hotkey()
-        elif not self.hotkey_on.get() and self.hotkey:
-            self.hotkey.stop()
-            self.hotkey = None
-
-    def bring_to_front(self) -> None:
-        from .winapi import force_foreground
-
-        self.root.deiconify()
-        self.root.attributes("-topmost", True)
-        self.root.lift()
-        force_foreground(int(self.root.wm_frame(), 16))
-        self.root.focus_force()
-        self.tree.focus_set()
-        self.root.after(300, lambda: self.root.attributes("-topmost", False))
-
     def _toggle_startup(self) -> None:
         try:
             if self.startup_on.get():
@@ -437,6 +416,30 @@ class App:
 
     # ---------- controller ----------
 
+    def _refresh_controller_status(self) -> None:
+        if not self.gamepad.available:
+            state = "Controller support unavailable"
+        elif self.gamepad.connected:
+            state = "Controller connected"
+        else:
+            state = "No controller detected (on a ROG Ally, switch Control mode to Gamepad)"
+        self.controller_hint.configure(
+            text="{}.  A / Enter select   B / Esc back   Y find trainer   X launch trainer   "
+                 "LB/RB page".format(state))
+        self.root.after(2000, self._refresh_controller_status)
+
+    def _on_key(self, event) -> str | None:
+        name = KEYS.get(event.keysym)
+        widget = event.widget
+        if not name or not isinstance(widget, tk.Misc):
+            return None
+        if isinstance(widget, (ttk.Treeview, tk.Listbox)) and name in ("up", "down", "lb", "rb"):
+            return None  # the list's own arrow keys already move the selection
+        if isinstance(widget, (ttk.Entry, ttk.Spinbox)) and name in ("left", "right"):
+            return None  # moving the text cursor
+        self.on_pad(name)
+        return "break"
+
     def _focusables(self, container: tk.Misc) -> list:
         found = []
         for child in container.winfo_children():
@@ -450,6 +453,9 @@ class App:
         top = widget.winfo_toplevel() if widget else self.root
         if isinstance(top, TrainerFinder):
             top.on_pad(name, widget)
+            return
+        if widget is self.filter_entry and name == "a":
+            self.tree.focus_set()
             return
         detail = self._focusables(self.detail)
         if name in ("lb", "rb") or (widget is self.tree and name in ("up", "down")):
@@ -575,9 +581,8 @@ class TrainerFinder(tk.Toplevel):
         bar = ttk.Frame(self, padding=12)
         bar.pack(fill="x")
         self.query = tk.StringVar(value=game.name)
-        entry = ttk.Entry(bar, textvariable=self.query)
-        entry.pack(side="left", fill="x", expand=True)
-        entry.bind("<Return>", lambda _: self.search())
+        self.entry = ttk.Entry(bar, textvariable=self.query)
+        self.entry.pack(side="left", fill="x", expand=True)
         ttk.Button(bar, text="Search", command=self.search).pack(side="left", padx=(8, 0))
 
         self.heading = ttk.Label(self, text="", padding=(12, 0))
@@ -585,8 +590,6 @@ class TrainerFinder(tk.Toplevel):
         self.listbox = tk.Listbox(self, activestyle="dotbox", font=FONT)
         self.listbox.pack(fill="both", expand=True, padx=12, pady=8)
         self.listbox.bind("<Double-Button-1>", lambda _: self.choose())
-        self.listbox.bind("<Return>", lambda _: self.choose())
-        self.bind("<Escape>", lambda _: self.go_back())
 
         buttons = ttk.Frame(self, padding=(12, 0, 12, 12))
         buttons.pack(fill="x")
@@ -612,6 +615,8 @@ class TrainerFinder(tk.Toplevel):
         elif name == "a":
             if isinstance(widget, ttk.Button):
                 widget.invoke()
+            elif widget is self.entry:
+                self.search()
             else:
                 self.choose()
         elif name in ("up", "down", "lb", "rb"):
