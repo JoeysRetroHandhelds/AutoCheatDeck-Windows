@@ -38,6 +38,7 @@ class Watcher:
         launch: Callable[[str, str], None],
         delay: Callable[[], float],
         interval: float = 3.0,
+        on_change: Callable[[set[str]], None] | None = None,
     ):
         self._targets = targets
         self._list_processes = list_processes
@@ -45,6 +46,11 @@ class Watcher:
         self._delay = delay
         self._interval = interval
         self._seen: set[str] = set()
+        # Games already running when watching starts already have their trainer (or the user chose
+        # not to start one); only launch for games that start afterwards.
+        self._primed = False
+        self._on_change = on_change
+        self.running: set[str] = set()
         self._pending: dict[str, float] = {}
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -56,6 +62,16 @@ class Watcher:
             self._list_processes(),
             ignore={trainer for _, trainer in targets.values()},
         )
+        if running != self.running:
+            self.running = running
+            if self._on_change:
+                self._on_change(set(running))
+        if not self._primed:
+            if not targets:  # the game list hasn't loaded yet; prime once there's something to watch
+                return
+            self._primed = True
+            self._seen = running
+            return
         for appid in running - self._seen:
             self._pending[appid] = now + self._delay()
         for appid in self._seen - running:

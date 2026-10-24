@@ -34,19 +34,23 @@ class SteamTest(unittest.TestCase):
                 f.write('"libraryfolders" { "0" { "path" "%s" } "1" { "path" "%s" } }'
                         % (steam_dir.replace("\\", "\\\\"), extra.replace("\\", "\\\\")))
 
-            def add(lib, appid, name, folder, create=True):
+            def add(lib, appid, name, folder, create=True, played=0):
                 with open(os.path.join(lib, "steamapps", "appmanifest_%s.acf" % appid), "w") as f:
-                    f.write('"AppState" { "appid" "%s" "name" "%s" "installdir" "%s" }' % (appid, name, folder))
+                    f.write('"AppState" { "appid" "%s" "name" "%s" "installdir" "%s" "LastPlayed" "%d" }'
+                            % (appid, name, folder, played))
                 if create:
                     os.makedirs(os.path.join(lib, "steamapps", "common", folder))
 
-            add(steam_dir, "1145360", "Hades", "Hades")
-            add(extra, "1245620", "ELDEN RING", "ELDEN RING")
+            add(steam_dir, "1145360", "Hades", "Hades", played=1700000000)
+            add(extra, "1245620", "ELDEN RING", "ELDEN RING", played=1790000000)
+            add(extra, "620", "Portal 2", "Portal 2")
+            add(steam_dir, "400", "Balatro", "Balatro")
             add(extra, "228980", "Steamworks Common Redistributables", "Steamworks Shared")
             add(extra, "999", "Uninstalled", "Gone", create=False)
 
             games = steam.installed_games(steam_dir)
-        self.assertEqual([g.name for g in games], ["ELDEN RING", "Hades"])
+        # Most recently played first, then never-played games alphabetically.
+        self.assertEqual([g.name for g in games], ["ELDEN RING", "Hades", "Balatro", "Portal 2"])
 
 
 class WatcherTest(unittest.TestCase):

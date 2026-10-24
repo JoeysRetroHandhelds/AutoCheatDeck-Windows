@@ -99,11 +99,21 @@ def download(download_url: str, page_url: str, target_dir: str) -> dict:
                 digest.update(chunk)
                 out.write(chunk)
 
+    # Set the current trainer aside instead of deleting it: on Windows the rename fails while the
+    # trainer is running, and it can be put back if the new download turns out to be unusable.
+    previous = target_dir + ".previous"
+    if os.path.exists(previous):
+        shutil.rmtree(previous)
+    if os.path.isdir(target_dir):
+        try:
+            os.rename(target_dir, previous)
+        except OSError:
+            os.remove(tmp_path)
+            raise ValueError("Close the trainer before replacing it.")
+
     try:
         with open(tmp_path, "rb") as f:
             magic = f.read(4)
-        if os.path.isdir(target_dir):
-            shutil.rmtree(target_dir)
         os.makedirs(target_dir)
 
         if magic.startswith(b"PK"):
@@ -123,8 +133,14 @@ def download(download_url: str, page_url: str, target_dir: str) -> dict:
             shutil.move(tmp_path, exe_path)
         else:
             raise ValueError("Downloaded file is not an exe or zip")
+    except BaseException:
+        shutil.rmtree(target_dir, ignore_errors=True)
+        if os.path.isdir(previous):
+            os.rename(previous, target_dir)
+        raise
     finally:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
+    shutil.rmtree(previous, ignore_errors=True)
 
     return {"path": exe_path, "sha256": digest.hexdigest(), "size": size}

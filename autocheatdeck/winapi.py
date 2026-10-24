@@ -48,6 +48,19 @@ class GlobalHotkey:
             _user32.PostThreadMessageW(self._thread_id, WM_QUIT, 0, 0)
 
 
+def force_foreground(hwnd: int) -> None:
+    """Bring a window to the front even when another app (a game, the Xbox shell) has focus.
+
+    Windows only lets the process that received the last input take the foreground; a synthetic
+    Alt tap makes this process that one, which is the documented-in-practice workaround.
+    """
+    SW_RESTORE = 9
+    _user32.keybd_event(0x12, 0, 0, 0)
+    _user32.keybd_event(0x12, 0, 2, 0)
+    _user32.ShowWindow(hwnd, SW_RESTORE)
+    _user32.SetForegroundWindow(hwnd)
+
+
 def enable_dpi_awareness() -> None:
     """Render at native resolution instead of being bitmap-scaled (blurry) on high-DPI screens."""
     try:
