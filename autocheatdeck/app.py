@@ -185,7 +185,7 @@ class App:
         self.delay.trace_add("write", lambda *_: self._save_delay())
         ttk.Spinbox(bottom, from_=0, to=120, width=5, textvariable=self.delay).pack(side="left", padx=(6, 18))
         self.startup_on = tk.BooleanVar(value=startup.is_enabled())
-        ttk.Checkbutton(bottom, text="Start with Windows", variable=self.startup_on,
+        ttk.Checkbutton(bottom, text="Start with Windows (minimized)", variable=self.startup_on,
                         command=self._toggle_startup).pack(side="left")
 
         updates = ttk.Frame(self.root, padding=(12, 0, 12, 8))
