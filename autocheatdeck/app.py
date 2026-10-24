@@ -18,7 +18,7 @@ HOTKEY = "T"
 
 def launch_trainer(path: str) -> None:
     # ShellExecute (not CreateProcess) so trainers that require admin get their UAC prompt.
-    os.startfile(path, "open", None, os.path.dirname(path))
+    os.startfile(path, "open", "", os.path.dirname(path))
 
 
 class App:
@@ -80,9 +80,13 @@ class App:
     def _drain_events(self) -> None:
         while True:
             try:
-                self._events.get_nowait()()
+                event = self._events.get_nowait()
             except queue.Empty:
                 break
+            try:
+                event()
+            except Exception as e:  # one failing event must not stop the loop
+                self.set_status("Error: {}".format(e))
         self.root.after(100, self._drain_events)
 
     def run_bg(self, work: Callable[[], Any], done: Callable[[Any], None], status: str = "") -> None:
@@ -261,13 +265,14 @@ class App:
         try:
             launch_trainer(path)
             self.set_status("Started trainer for {}".format(game.name if game else appid))
-        except OSError as e:
+        except Exception as e:  # a missed game-start launch must be visible, not just a status line
             self.set_status("Could not start trainer: {}".format(e))
+            messagebox.showerror("AutoCheatDeck", "Could not start the trainer:\n\n{}".format(e), parent=self.root)
 
     def _launch_now(self, path: str) -> None:
         try:
             launch_trainer(path)
-        except OSError as e:
+        except Exception as e:  # report every launch failure in the UI
             messagebox.showerror("AutoCheatDeck", str(e), parent=self.root)
 
     def find_trainer(self) -> None:
