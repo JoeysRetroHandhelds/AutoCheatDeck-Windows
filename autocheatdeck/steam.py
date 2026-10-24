@@ -5,6 +5,12 @@ import re
 from dataclasses import dataclass
 
 _TOKEN = re.compile(r'"((?:[^"\\]|\\.)*)"|([{}])')
+_ESCAPE = re.compile(r"\\(.)")
+_ESCAPES = {"n": "\n", "t": "\t"}
+
+
+def _unescape(value: str) -> str:
+    return _ESCAPE.sub(lambda m: _ESCAPES.get(m.group(1), m.group(1)), value)
 
 
 @dataclass(frozen=True)
@@ -12,6 +18,7 @@ class Game:
     appid: str
     name: str
     install_dir: str
+    last_played: int = 0
 
 
 def parse_vdf(text: str) -> dict:
@@ -29,9 +36,9 @@ def parse_vdf(text: str) -> dict:
                 stack.pop()
             key = None
         elif key is None:
-            key = quoted.replace("\\\\", "\\")
+            key = _unescape(quoted)
         else:
-            stack[-1][key] = quoted.replace("\\\\", "\\")
+            stack[-1][key] = _unescape(quoted)
             key = None
     return stack[0]
 
@@ -93,5 +100,10 @@ def installed_games(steam_path: str | None = None) -> list[Game]:
                 continue
             install_dir = os.path.join(apps, "common", folder)
             if os.path.isdir(install_dir):
-                games[appid] = Game(appid, title, install_dir)
-    return sorted(games.values(), key=lambda g: g.name.lower())
+                try:
+                    last_played = int(state.get("LastPlayed", 0))
+                except ValueError:
+                    last_played = 0
+                games[appid] = Game(appid, title, install_dir, last_played)
+    # Most recently played first; never-played games after, alphabetically.
+    return sorted(games.values(), key=lambda g: (-g.last_played, g.name.lower()))

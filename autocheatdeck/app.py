@@ -2,16 +2,19 @@
 
 import os
 import queue
+import shutil
 import sys
 import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Any, Callable
 
-from . import __version__, config, fling, processes, steam, updater
+from . import __version__, config, fling, processes, startup, steam, updater
 from .watcher import Watcher
 
 FONT = ("Segoe UI", 12)
+ACCENT = "#2f6fdb"
+ACCENT_SOFT = "#dbe7fb"
 TITLE_FONT = ("Segoe UI Semibold", 15)
 HOTKEY = "T"
 
@@ -22,7 +25,7 @@ def launch_trainer(path: str) -> None:
 
 
 class App:
-    def __init__(self, root: tk.Tk):
+    def __init__(self, root: tk.Tk, background: bool = False):
         self.root = root
         self.cfg = config.Config()
         self.games: list[steam.Game] = []
@@ -38,7 +41,15 @@ class App:
         root.minsize(self.px(760), self.px(480))
         root.option_add("*Font", FONT)
         style = ttk.Style(root)
+        # "clam" lets the focused control be highlighted clearly, which controller navigation needs.
+        style.theme_use("clam")
         style.configure(".", font=FONT)
+        style.map("TButton", background=[("focus", ACCENT_SOFT), ("active", ACCENT_SOFT)],
+                  bordercolor=[("focus", ACCENT)], lightcolor=[("focus", ACCENT)], darkcolor=[("focus", ACCENT)])
+        style.map("TCheckbutton", background=[("focus", ACCENT_SOFT)])
+        style.configure("TCheckbutton", indicatorsize=self.px(14))
+        style.map("Treeview", background=[("selected", "focus", ACCENT), ("selected", "#9fb8e6")],
+                  foreground=[("selected", "white")])
         style.configure("Treeview", rowheight=self.px(34), font=FONT)
         style.configure("Treeview.Heading", font=FONT)
         style.configure("TButton", padding=(12, 8))
@@ -52,12 +63,24 @@ class App:
             list_processes=lambda: list(processes.running_exe_paths().values()),
             launch=lambda appid, path: self.post(lambda: self._auto_launch(appid, path)),
             delay=lambda: float(self.cfg.data.get("launchDelay", 5)),
+            on_change=lambda running: self.post(self._update_game_state),
         )
         self.watcher.start()
 
         self.hotkey = None
         if self.cfg.data.get("hotkey", True):
             self._start_hotkey()
+
+        from .gamepad import Gamepad
+
+        self.gamepad = Gamepad(on_press=lambda name: self.post(lambda: self.on_pad(name)),
+                               on_summon=lambda: self.post(lambda: self.bring_to_front(maximize=True)))
+
+        # A portable folder can move; keep the startup entry pointing at this copy.
+        if self.app_dir and startup.is_enabled():
+            startup.enable(startup.command_for(sys.executable))
+        if background:
+            root.iconify()
 
         if self.app_dir:
             updater.cleanup(self.app_dir)
@@ -113,6 +136,7 @@ class App:
 
     def quit(self) -> None:
         self.watcher.stop()
+        self.gamepad.stop()
         if self.hotkey:
             self.hotkey.stop()
         self.root.destroy()
@@ -155,19 +179,25 @@ class App:
         bottom.pack(fill="x")
         ttk.Label(bottom, text="Launch delay (s):").pack(side="left")
         self.delay = tk.IntVar(value=int(self.cfg.data.get("launchDelay", 5)))
-        delay_box = ttk.Spinbox(bottom, from_=0, to=120, width=5, textvariable=self.delay,
-                                command=self._save_delay)
-        delay_box.pack(side="left", padx=(6, 18))
-        delay_box.bind("<FocusOut>", lambda _: self._save_delay())
+        self.delay.trace_add("write", lambda *_: self._save_delay())
+        ttk.Spinbox(bottom, from_=0, to=120, width=5, textvariable=self.delay).pack(side="left", padx=(6, 18))
         self.hotkey_on = tk.BooleanVar(value=bool(self.cfg.data.get("hotkey", True)))
         ttk.Checkbutton(bottom, text="Ctrl+Alt+{} shows this window".format(HOTKEY), variable=self.hotkey_on,
                         command=self._toggle_hotkey).pack(side="left")
+        self.startup_on = tk.BooleanVar(value=startup.is_enabled())
+        ttk.Checkbutton(bottom, text="Start with Windows", variable=self.startup_on,
+                        command=self._toggle_startup).pack(side="left", padx=(18, 0))
 
-        self.update_frame = ttk.Frame(bottom)
+        updates = ttk.Frame(self.root, padding=(12, 0, 12, 8))
+        updates.pack(fill="x")
+        self.update_frame = ttk.Frame(updates)
         self.update_frame.pack(side="right")
 
         self.status = ttk.Label(self.root, text="", padding=(12, 0, 12, 8), foreground="#555")
         self.status.pack(fill="x")
+        ttk.Label(self.root, text="Controller:  A select   B back   Y find trainer   X launch trainer   "
+                                  "LB/RB page   Back+Start show window", foreground="#777",
+                  padding=(12, 0, 12, 8)).pack(fill="x")
 
     def _clear_detail(self) -> None:
         for child in self.detail.winfo_children():
@@ -179,10 +209,14 @@ class App:
         self.run_bg(steam.installed_games, self._games_loaded, "Reading Steam library...")
 
     def _games_loaded(self, games: list[steam.Game]) -> None:
+        first_load = not self.games
         self.games = games
         self.by_id = {g.appid: g for g in games}
-        self.set_status("{} Steam games found".format(len(games)) if games else "No Steam games found")
+        self.set_status("{} Steam games found, most recently played first".format(len(games))
+                        if games else "No Steam games found")
         self._fill_list()
+        if first_load:
+            self.tree.focus_set()  # start on the list so a controller works straight away
 
     def _fill_list(self) -> None:
         selected = self.selected_appid()
@@ -196,8 +230,12 @@ class App:
             if entry and os.path.isfile(entry.get("path", "")):
                 mark = "Auto" if entry.get("autoLaunch", True) else "Manual"
             self.tree.insert("", "end", iid=game.appid, text=game.name, values=(mark,))
-        if selected and self.tree.exists(selected):
+        if not (selected and self.tree.exists(selected)):
+            children = self.tree.get_children()
+            selected = children[0] if children else None
+        if selected:
             self.tree.selection_set(selected)
+            self.tree.focus(selected)
             self.tree.see(selected)
         self._show_selected()
 
@@ -223,6 +261,9 @@ class App:
             auto = tk.BooleanVar(value=entry.get("autoLaunch", True))
             ttk.Checkbutton(self.detail, text="Start trainer when the game starts", variable=auto,
                             command=lambda: self._set_auto(game.appid, auto.get())).pack(anchor="w", pady=4)
+            self.game_state = ttk.Label(self.detail, text="", foreground="#777", wraplength=self.px(360))
+            self.game_state.pack(anchor="w", pady=(0, 8))
+            self._update_game_state()
             buttons = [
                 ("Launch trainer now", lambda: self._launch_now(entry["path"])),
                 ("Check for trainer update", lambda: self.check_trainer_update(game.appid)),
@@ -235,6 +276,20 @@ class App:
             buttons = [("Find trainer online", self.find_trainer)]
         for label, command in buttons:
             ttk.Button(self.detail, text=label, command=command).pack(fill="x", pady=4)
+
+    def _update_game_state(self) -> None:
+        label = getattr(self, "game_state", None)
+        appid = self.selected_appid()
+        entry = self.cfg.game(appid or "")
+        if not label or not label.winfo_exists() or not entry:
+            return
+        if not entry.get("autoLaunch", True):
+            label.configure(text="")
+        elif appid in self.watcher.running:
+            label.configure(text="Game detected: running")
+        else:
+            label.configure(text="Game not running. If it is running and this doesn't change, "
+                                 "the game may hide its process (anti-cheat); use Launch trainer now.")
 
     def _set_auto(self, appid: str, value: bool) -> None:
         entry = self.cfg.game(appid)
@@ -327,9 +382,16 @@ class App:
     def remove_trainer(self, appid: str) -> None:
         if not messagebox.askyesno("AutoCheatDeck", "Remove this game's trainer?", parent=self.root):
             return
-        import shutil
-
-        shutil.rmtree(os.path.join(config.trainers_dir(), appid), ignore_errors=True)
+        folder = os.path.join(config.trainers_dir(), appid)
+        if os.path.isdir(folder):
+            # Renaming fails while the trainer is running, so nothing is half-deleted.
+            doomed = folder + ".removing"
+            try:
+                os.rename(folder, doomed)
+            except OSError:
+                messagebox.showerror("AutoCheatDeck", "Close the trainer before removing it.", parent=self.root)
+                return
+            shutil.rmtree(doomed, ignore_errors=True)
         self.cfg.set_game(appid, None)
         self._fill_list()
 
@@ -351,12 +413,91 @@ class App:
             self.hotkey.stop()
             self.hotkey = None
 
-    def bring_to_front(self) -> None:
+    def bring_to_front(self, maximize: bool = False) -> None:
+        from .winapi import force_foreground
+
         self.root.deiconify()
+        if maximize:
+            self.root.state("zoomed")
         self.root.attributes("-topmost", True)
         self.root.lift()
+        force_foreground(int(self.root.wm_frame(), 16))
         self.root.focus_force()
+        self.tree.focus_set()
         self.root.after(300, lambda: self.root.attributes("-topmost", False))
+
+    def _toggle_startup(self) -> None:
+        try:
+            if self.startup_on.get():
+                if not self.app_dir:
+                    raise OSError("Start with Windows only works from the packaged app.")
+                startup.enable(startup.command_for(sys.executable))
+            else:
+                startup.disable()
+        except OSError as e:
+            self.startup_on.set(startup.is_enabled())
+            messagebox.showerror("AutoCheatDeck", str(e), parent=self.root)
+
+    # ---------- controller ----------
+
+    def _focusables(self, container: tk.Misc) -> list:
+        found = []
+        for child in container.winfo_children():
+            if isinstance(child, (ttk.Button, ttk.Checkbutton)) and child.instate(["!disabled"]):
+                found.append(child)
+            found.extend(self._focusables(child))
+        return found
+
+    def on_pad(self, name: str) -> None:
+        widget = self.root.focus_get()
+        top = widget.winfo_toplevel() if widget else self.root
+        if isinstance(top, TrainerFinder):
+            top.on_pad(name, widget)
+            return
+        detail = self._focusables(self.detail)
+        if name in ("lb", "rb") or (widget is self.tree and name in ("up", "down")):
+            self.tree.focus_set()
+            key = {"up": "<Up>", "down": "<Down>", "lb": "<Prior>", "rb": "<Next>"}[name]
+            self.tree.event_generate(key)
+            focused = self.tree.focus()
+            if focused:
+                self.tree.selection_set(focused)
+                self.tree.see(focused)
+        elif name == "y":
+            self.find_trainer()
+        elif name == "x":
+            entry = self.cfg.game(self.selected_appid() or "")
+            if entry and os.path.isfile(entry.get("path", "")):
+                self._launch_now(entry["path"])
+        elif widget is self.tree or widget is None:
+            if name in ("right", "a") and detail:
+                detail[0].focus_set()
+            elif widget is None:
+                self.tree.focus_set()
+        elif widget in detail:
+            index = detail.index(widget)
+            if name == "a":
+                widget.invoke()
+            elif name in ("left", "b"):
+                self.tree.focus_set()
+            elif name == "down" and index + 1 < len(detail):
+                detail[index + 1].focus_set()
+            elif name == "up":
+                (detail[index - 1] if index > 0 else self.tree).focus_set()
+            elif name == "right":
+                bottom = self._focusables(self.update_frame)
+                if bottom:
+                    bottom[-1].focus_set()
+        else:
+            # Filter box, settings row and update buttons: plain focus traversal.
+            if name in ("down", "right"):
+                widget.tk_focusNext().focus_set()
+            elif name in ("up", "left"):
+                widget.tk_focusPrev().focus_set()
+            elif name == "a" and isinstance(widget, (ttk.Button, ttk.Checkbutton)):
+                widget.invoke()
+            elif name == "b":
+                self.tree.focus_set()
 
     # ---------- app updates ----------
 
@@ -448,14 +589,40 @@ class TrainerFinder(tk.Toplevel):
         self.listbox.pack(fill="both", expand=True, padx=12, pady=8)
         self.listbox.bind("<Double-Button-1>", lambda _: self.choose())
         self.listbox.bind("<Return>", lambda _: self.choose())
+        self.bind("<Escape>", lambda _: self.go_back())
 
         buttons = ttk.Frame(self, padding=(12, 0, 12, 12))
         buttons.pack(fill="x")
         self.back = ttk.Button(buttons, text="Back", command=self.search)
         ttk.Button(buttons, text="Select", command=self.choose).pack(side="right")
-        ttk.Button(buttons, text="Cancel", command=self.destroy).pack(side="right", padx=8)
+        ttk.Button(buttons, text="Cancel", command=self.close).pack(side="right", padx=8)
 
         self.search()
+
+    def close(self) -> None:
+        self.destroy()
+        self.app.tree.focus_set()
+
+    def go_back(self) -> None:
+        if self.page is not None:
+            self.search()
+        else:
+            self.close()
+
+    def on_pad(self, name: str, widget) -> None:
+        if name == "b":
+            self.go_back()
+        elif name == "a":
+            if isinstance(widget, ttk.Button):
+                widget.invoke()
+            else:
+                self.choose()
+        elif name in ("up", "down", "lb", "rb"):
+            self.listbox.focus_set()
+            key = {"up": "<Up>", "down": "<Down>", "lb": "<Prior>", "rb": "<Next>"}[name]
+            self.listbox.event_generate(key)
+        elif name in ("left", "right") and widget is not None:
+            (widget.tk_focusNext() if name == "right" else widget.tk_focusPrev()).focus_set()
 
     def _show(self, heading: str, items: list[dict], empty: str) -> None:
         self.items = items
@@ -503,3 +670,4 @@ class TrainerFinder(tk.Toplevel):
         ):
             self.app.install_trainer(self.game, self.page, item)
             self.destroy()
+            self.app.tree.focus_set()
