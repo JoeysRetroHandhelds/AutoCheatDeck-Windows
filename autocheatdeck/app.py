@@ -73,8 +73,7 @@ class App:
 
         from .gamepad import Gamepad
 
-        self.gamepad = Gamepad(on_press=lambda name: self.post(lambda: self.on_pad(name)),
-                               on_summon=lambda: self.post(lambda: self.bring_to_front(maximize=True)))
+        self.gamepad = Gamepad(on_press=lambda name: self.post(lambda: self.on_pad(name)))
 
         # A portable folder can move; keep the startup entry pointing at this copy.
         if self.app_dir and startup.is_enabled():
@@ -196,7 +195,7 @@ class App:
         self.status = ttk.Label(self.root, text="", padding=(12, 0, 12, 8), foreground="#555")
         self.status.pack(fill="x")
         ttk.Label(self.root, text="Controller:  A select   B back   Y find trainer   X launch trainer   "
-                                  "LB/RB page   Back+Start show window", foreground="#777",
+                                  "LB/RB page", foreground="#777",
                   padding=(12, 0, 12, 8)).pack(fill="x")
 
     def _clear_detail(self) -> None:
@@ -413,12 +412,10 @@ class App:
             self.hotkey.stop()
             self.hotkey = None
 
-    def bring_to_front(self, maximize: bool = False) -> None:
+    def bring_to_front(self) -> None:
         from .winapi import force_foreground
 
         self.root.deiconify()
-        if maximize:
-            self.root.state("zoomed")
         self.root.attributes("-topmost", True)
         self.root.lift()
         force_foreground(int(self.root.wm_frame(), 16))

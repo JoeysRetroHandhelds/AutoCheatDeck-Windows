@@ -49,8 +49,7 @@ def main() -> None:
         if not background:  # a startup launch finding it already running stays quiet
             root = tk.Tk()
             root.withdraw()
-            messagebox.showinfo("AutoCheatDeck", "AutoCheatDeck is already running. Press Ctrl+Alt+T or "
-                                "Back+Start on a controller to show it.")
+            messagebox.showinfo("AutoCheatDeck", "AutoCheatDeck is already running. Press Ctrl+Alt+T to show it.")
         return
 
     root = tk.Tk()
