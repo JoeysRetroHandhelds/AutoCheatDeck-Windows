@@ -1,0 +1,155 @@
+﻿Text	Final Fantasy Resonance
+Text	v1.0.x Plus 50 Trainer
+RadioButton	简体
+Text	简体
+RadioButton	繁体
+Text	繁体
+RadioButton	English
+Text	English
+Button	Launch Game Pass Version
+Button	Install Anti-Cheat Bypass
+Text	Game Process Name:
+Text	Process ID: 
+Text	Credit: FLiNG|FLiNGTrainer.com
+Text	Trainer Version: Latest Version
+Text	Check for trainer update (√)
+Text	Supporter Links
+Text	Support the author
+Text	Request Trainers
+Text	Request Updates
+Text	Hotkeys
+Text	Options
+Text	Num 1
+Text	Infinite HP
+Text	Num 2
+Text	Infinite MP
+Text	Num 3
+Text	Max Limit Gauge
+Text	Num 4
+Text	100% Hit Chance
+Text	Num 5
+Text	100% Evade Chance
+Text	Num 6
+Text	100% Critical Chance
+Text	Num 7
+Text	100% Drop Rate
+Text	Num 8
+Text	No Random Encounter
+Text	Num 9
+Text	Fast Random Encounter
+Text	Num 0
+Text	One Hit Stagger
+Text	Num .
+Text	Stagger Multiplier
+Text	<
+Text	>
+Text	Num +
+Text	Super Damage/One Hit Kills
+Text	Num -
+Text	Damage Multiplier
+Text	<
+Text	>
+Text	Num /
+Text	Defense Multiplier
+Text	<
+Text	>
+Text	Ctrl+Num 1
+Text	Edit Money
+Text	Ctrl+Num 2
+Text	Money Multiplier
+Text	<
+Text	>
+Text	Ctrl+Num 3
+Text	Consumables Won't Decrease
+Text	Ctrl+Num 4
+Text	Obtain All Consumables
+Text	Ctrl+Num 5
+Text	Obtain All Weapons
+Text	Ctrl+Num 6
+Text	Obtain All Armor
+Text	Ctrl+Num 7
+Text	Obtain All Accessories
+Text	Ctrl+Num 8
+Text	Edit Consumable Amounts
+Text	Ctrl+Num 9
+Text	Edit Weapon Amounts
+Text	Ctrl+Num 0
+Text	Edit Armor Amounts
+Text	Ctrl+Num .
+Text	Edit Accessory Amounts
+Text	Ctrl+Num +
+Text	Can Save Anywhere
+Text	Alt+Num 1
+Text	Infinite Exp
+Text	Alt+Num 2
+Text	Exp Multiplier
+Text	<
+Text	>
+Text	Alt+Num 3
+Text	Infinite MRP
+Text	Alt+Num 4
+Text	MRP Multiplier
+Text	<
+Text	>
+Text	Alt+Num 5
+Text	Set Game Speed
+Text	<
+Text	>
+Text	Alt+Num 6
+Text	Set Move Speed
+Text	<
+Text	>
+Text	Alt+Num 7
+Text	Set Player Speed
+Text	<
+Text	>
+Text	Alt+Num 8
+Text	Set FOV
+Text	Alt+Num /
+Text	Save Location
+Text	Alt+Num *
+Text	Teleport
+Text	Alt+Num -
+Text	Undo Teleport
+Text	Selected Character Bonus Stats
+Text	Ctrl+F1
+Text	Max HP
+Text	Ctrl+F2
+Text	Max MP
+Text	Ctrl+F3
+Text	Phys. Atk.
+Text	Ctrl+F4
+Text	Phys. Def.
+Text	Ctrl+F5
+Text	Mag. Atk.
+Text	Ctrl+F6
+Text	Mag. Def.
+Text	Ctrl+F7
+Text	Sanctity
+Text	Ctrl+F8
+Text	Strength
+Text	Ctrl+F9
+Text	Stamina
+Text	Ctrl+F10
+Text	Magic
+Text	Ctrl+F11
+Text	Spirit
+Text	Ctrl+F12
+Text	Speed
+Text	Shift+F12
+Text	AP
+Text	General Notes: Press Ctrl+Shift+Home to disable/enable hotkeys.
+Text	Trainer Settings
+Text	Edit Hotkeys
+Text	(Click on hotkeys to edit) (Ctrl+Shift+Home: disable/enable hotkeys)
+Text	Save Input Values
+Text	(Save all input values. Restore them on trainer start up)
+Text	Auto Enable Options
+Text	(Enable saved options when the game is detected)
+Text	Save Enabled Options
+Text	(Save currently enabled options for "Auto Enable Options")
+Text	Please Enter Hotkey
+Text	...
+Text	It's recommended to edit hotkeys when game is not running to avoid activating options by accident while editing hotkey.
+Text	Press Esc to cancel. To reset hotkeys, please disable the "Edit Hotkeys" setting and restart the trainer.
+Text	已成功保存当前激活的功能！
