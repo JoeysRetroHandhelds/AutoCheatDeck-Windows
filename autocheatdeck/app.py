@@ -14,7 +14,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Any, Callable
 
-from . import __version__, config, fling, library, log, startup, steam, updater
+from . import __version__, api, cheats, config, fling, library, log, startup, steam, updater
 from .winapi import WINDOW_TITLE, listen_for_show
 
 FONT = ("Segoe UI", 12)
@@ -51,7 +51,7 @@ class Dialogs:
         return wrapped
 
 
-class App:
+class App(api.Backend):
     def __init__(self, root: tk.Tk, background: bool = False):
         self.root = root
         self.hidden = False
@@ -122,6 +122,9 @@ class App:
         self._refresh_update_controls()
         if self.cfg.data.get("checkUpdates", True):
             self.check_app_update(quiet=True)
+
+        # Local API for the Game Bar widget (sleeps in accept() until a request arrives).
+        self.api = api.Server(self, on_error=lambda text: self.post(lambda: self.set_status(text)))
 
         root.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
         root.bind("<<Wake>>", lambda _: self._drain_events())
@@ -198,6 +201,7 @@ class App:
         self.tree.focus_set()
 
     def quit(self) -> None:
+        self.api.stop()
         self.gamepad.stop()
         self.tray.stop()
         self.root.destroy()
@@ -398,6 +402,73 @@ class App:
         self.set_status("Started trainer for {}".format(game.name if game else appid))
         # Only Steam records play times; launching a trainer counts as playing for the others.
         self._record_played({appid}, int(time.time()))
+
+    # ---------- cheats (shared by the Game Bar API) ----------
+
+    def _cheat_cache(self, appid: str) -> str:
+        folder = os.path.join(config.data_dir(), "cheats")
+        os.makedirs(folder, exist_ok=True)
+        return os.path.join(folder, appid + ".json")
+
+    def cached_cheats(self, appid: str) -> dict | None:
+        entry = self.cfg.game(appid)
+        if not entry or not entry.get("sha256"):
+            return None
+        return cheats.load_cache(self._cheat_cache(appid), entry["sha256"])
+
+    def read_cheats(self, appid: str, wait_seconds: float = 0) -> dict:
+        """Read the running trainer's cheats (one UAC prompt) and cache them. Runs off the UI thread."""
+        entry = self.cfg.game(appid)
+        if not entry or not os.path.isfile(entry.get("path", "")):
+            raise ValueError("No trainer installed for this game")
+        deadline = time.monotonic() + wait_seconds
+        hwnd = cheats.trainer_window(entry["path"])
+        while not hwnd and time.monotonic() < deadline:  # bounded wait for a trainer just started
+            time.sleep(0.5)
+            hwnd = cheats.trainer_window(entry["path"])
+        if not hwnd:
+            raise ValueError("The trainer isn't running")
+        parsed = cheats.read_running_trainer(hwnd)
+        cheats.save_cache(self._cheat_cache(appid), entry["sha256"], parsed)
+        log.get().info("cheats: read %d cheats for %s", len(parsed["cheats"]), appid)
+        return parsed
+
+    # Game Bar API (called on the API server's threads)
+
+    def api_games(self) -> list[dict]:
+        result = []
+        for game in self.games:
+            entry = self.cfg.game(game.appid)
+            if entry and os.path.isfile(entry.get("path", "")):
+                result.append({"id": game.appid, "name": game.name, "source": game.source,
+                               "trainer": entry["title"], "hasCheats": self.cached_cheats(game.appid) is not None})
+        return result
+
+    def api_cheats(self, appid: str) -> dict | None:
+        cached = self.cached_cheats(appid)
+        return cached["cheats"] if cached else None
+
+    def api_launch(self, appid: str) -> dict:
+        entry = self.cfg.game(appid)
+        if not entry or not os.path.isfile(entry.get("path", "")):
+            raise ValueError("No trainer installed for this game")
+        self.post(lambda: self._launch_now(appid, entry["path"]))
+        reading = self.cached_cheats(appid) is None
+        if reading:
+            def work() -> None:
+                try:
+                    self.read_cheats(appid, wait_seconds=30)
+                except Exception:  # the widget sees "no cheats yet" and can ask again
+                    log.get().exception("cheats: reading after launch failed")
+
+            threading.Thread(target=work, name="read-cheats", daemon=True).start()
+        return {"started": True, "readingCheats": reading}
+
+    def api_read(self, appid: str) -> dict:
+        return {"cheats": self.read_cheats(appid)["cheats"]}
+
+    def api_press(self, key: str) -> None:
+        cheats.press(key)  # validates the hotkey (ValueError -> 400)
 
     def find_trainer(self) -> None:
         game = self.by_id.get(self.selected_appid() or "")
