@@ -5,11 +5,12 @@ import queue
 import shutil
 import sys
 import threading
+import time
 import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Any, Callable
 
-from . import __version__, config, fling, launcher, log, processes, startup, steam, updater
+from . import __version__, config, fling, launcher, library, log, processes, startup, steam, updater
 from .watcher import Watcher
 from .winapi import WINDOW_TITLE, listen_for_show
 
@@ -175,16 +176,19 @@ class App:
         self.filter_entry = ttk.Entry(top, textvariable=self.search, width=28)
         self.filter_entry.pack(side="left")
         ttk.Button(top, text="Refresh", command=self.refresh_games).pack(side="left", padx=6)
+        ttk.Button(top, text="Add game", command=self.add_game).pack(side="left")
 
         body = ttk.PanedWindow(self.root, orient="horizontal")
         body.pack(fill="both", expand=True, padx=12)
 
         left = ttk.Frame(body)
-        self.tree = ttk.Treeview(left, columns=("trainer",), show="tree headings", selectmode="browse")
+        self.tree = ttk.Treeview(left, columns=("store", "trainer"), show="tree headings", selectmode="browse")
         self.tree.heading("#0", text="Game")
+        self.tree.heading("store", text="Store")
         self.tree.heading("trainer", text="Trainer")
-        self.tree.column("#0", width=self.px(340))
-        self.tree.column("trainer", width=self.px(110), anchor="center", stretch=False)
+        self.tree.column("#0", width=self.px(300))
+        self.tree.column("store", width=self.px(80), anchor="center", stretch=False)
+        self.tree.column("trainer", width=self.px(90), anchor="center", stretch=False)
         scroll = ttk.Scrollbar(left, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=scroll.set)
         self.tree.pack(side="left", fill="both", expand=True)
@@ -224,20 +228,24 @@ class App:
     # ---------- games ----------
 
     def refresh_games(self) -> None:
-        self.run_bg(steam.installed_games, self._games_loaded, "Reading Steam library...")
+        manual = list(self.cfg.data.get("manualGames", []))
+        seen = dict(self.cfg.data.get("lastPlayed", {}))
+        self.run_bg(lambda: library.all_games(manual, seen), self._games_loaded, "Reading game libraries...")
 
     def _games_loaded(self, games: list[steam.Game]) -> None:
         first_load = not self.games
         self.games = games
         self.by_id = {g.appid: g for g in games}
-        self.set_status("{} Steam games found, most recently played first".format(len(games))
-                        if games else "No Steam games found")
+        self.set_status("{} games found, most recently played first".format(len(games))
+                        if games else "No games found. Use Add game to add one by hand.")
         self._fill_list()
         if first_load:
             self.tree.focus_set()  # start on the list so a controller works straight away
 
     def _fill_list(self) -> None:
-        selected = self.selected_appid()
+        # A game that was just added by hand gets selected once it appears.
+        selected = getattr(self, "_select_after_load", None) or self.selected_appid()
+        self._select_after_load = None
         needle = self.search.get().strip().lower()
         self.tree.delete(*self.tree.get_children())
         for game in self.games:
@@ -247,7 +255,7 @@ class App:
             mark = ""
             if entry and os.path.isfile(entry.get("path", "")):
                 mark = "Auto" if entry.get("autoLaunch", True) else "Manual"
-            self.tree.insert("", "end", iid=game.appid, text=game.name, values=(mark,))
+            self.tree.insert("", "end", iid=game.appid, text=game.name, values=(game.source, mark))
         if not (selected and self.tree.exists(selected)):
             children = self.tree.get_children()
             selected = children[0] if children else None
@@ -296,7 +304,7 @@ class App:
                 self.game_state.pack(anchor="w", pady=(0, 8))
                 self._update_game_state()
                 launch_buttons = [("Use Steam launch option (most reliable)",
-                                   lambda: self.use_steam_launch(game, True))]
+                                   lambda: self.use_steam_launch(game, True))] if game.source == "Steam" else []
             buttons = launch_buttons + [
                 ("Launch trainer now", lambda: self._launch_now(entry["path"])),
                 ("Check for trainer update", lambda: self.check_trainer_update(game.appid)),
@@ -307,13 +315,63 @@ class App:
         else:
             ttk.Label(self.detail, text="No trainer yet", foreground="#777").pack(anchor="w", pady=(16, 8))
             buttons = [("Find trainer online", self.find_trainer)]
+        if game.source == "Manual":
+            buttons.append(("Remove this game from the list", lambda: self.remove_manual_game(game)))
         for label, command in buttons:
             ttk.Button(self.detail, text=label, command=command).pack(fill="x", pady=4)
 
     def _on_running_change(self, running: set[str]) -> None:
         names = sorted(self.by_id[a].name for a in running if a in self.by_id)
         log.get().info("watcher: games running: %s", names or "none")
+        if running:
+            # Only Steam records play times; remember them for the other stores so they sort too.
+            now = int(time.time())
+            self.post(lambda: self._record_played(running, now))
         self.post(self._update_game_state)
+
+    def _record_played(self, appids: set[str], when: int) -> None:
+        played = self.cfg.data.setdefault("lastPlayed", {})
+        for appid in appids:
+            played[appid] = when
+        self.cfg.save()
+
+    def add_game(self) -> None:
+        from tkinter import filedialog, simpledialog
+
+        exe = filedialog.askopenfilename(parent=self.root, title="Pick the game's .exe",
+                                         filetypes=[("Programs", "*.exe"), ("All files", "*.*")])
+        if not exe:
+            return
+        folder = os.path.dirname(exe)
+        default = os.path.splitext(os.path.basename(exe))[0]
+        name = simpledialog.askstring("Add game", "Name to show (used to search FLiNG):", initialvalue=default,
+                                      parent=self.root)
+        if not name:
+            return
+        appid = library.manual_id(folder)
+        manual = [e for e in self.cfg.data.get("manualGames", []) if e["id"] != appid]
+        manual.append({"id": appid, "name": name.strip(), "dir": folder})
+        self.cfg.data["manualGames"] = manual
+        self.cfg.save()
+        self._select_after_load = appid
+        self.refresh_games()
+
+    def remove_manual_game(self, game: steam.Game) -> None:
+        if not messagebox.askyesno("AutoCheatDeck", "Remove {} from the list? Its trainer is removed too.".format(
+                game.name), parent=self.root):
+            return
+        folder = os.path.join(config.trainers_dir(), game.appid)
+        if os.path.isdir(folder):
+            try:
+                os.rename(folder, folder + ".removing")
+            except OSError:
+                messagebox.showerror("AutoCheatDeck", "Close the trainer before removing the game.", parent=self.root)
+                return
+            shutil.rmtree(folder + ".removing", ignore_errors=True)
+        self.cfg.data["manualGames"] = [e for e in self.cfg.data.get("manualGames", []) if e["id"] != game.appid]
+        self.cfg.data["games"].pop(game.appid, None)
+        self.cfg.save()
+        self.refresh_games()
 
     def _update_game_state(self) -> None:
         label = getattr(self, "game_state", None)

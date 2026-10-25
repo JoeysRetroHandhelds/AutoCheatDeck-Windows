@@ -19,6 +19,7 @@ class Game:
     name: str
     install_dir: str
     last_played: int = 0
+    source: str = "Steam"
 
 
 def parse_vdf(text: str) -> dict:
