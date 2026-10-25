@@ -49,10 +49,11 @@
                 <DataTemplate x:DataType="local:CheatItem">
                     <Grid Padding="0,4" ColumnSpacing="10">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="96"/>
+                            <ColumnDefinition Width="40"/>
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="{x:Bind Key}" Opacity="0.7" FontFamily="Consolas" VerticalAlignment="Center"/>
+                        <TextBlock Text="{x:Bind State}" Opacity="{x:Bind StateOpacity}" FontWeight="SemiBold"
+                                   VerticalAlignment="Center"/>
                         <StackPanel Grid.Column="1">
                             <TextBlock Text="{x:Bind Name}" TextWrapping="Wrap"/>
                             <TextBlock Text="{x:Bind Note}" Opacity="0.6" FontSize="11" Visibility="{x:Bind NoteVisibility}"/>

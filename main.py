@@ -3,7 +3,7 @@ import sys
 import tkinter as tk
 from tkinter import messagebox
 
-from autocheatdeck import updater, winapi
+from autocheatdeck import protocol, updater, winapi
 from autocheatdeck.app import App
 
 
@@ -44,7 +44,7 @@ def main() -> None:
         except ValueError:
             pass
 
-    background = _take_arg("--background", 0) is not None
+    background = _take_arg("--background", 0) is not None or protocol.WIDGET_FLAG in sys.argv
     if not winapi.acquire_single_instance("Local\\AutoCheatDeck-Windows"):
         # Opening the app again is how you get back to it: show the running copy.
         # A startup launch finding it already running stays quiet.
@@ -52,8 +52,12 @@ def main() -> None:
             winapi.ask_running_copy_to_show()
         return
 
+    # Started by the Game Bar widget (through the autocheatdeck: link): stay in the tray and quit
+    # once the widget has been idle for two minutes.
+    widget = _take_arg(protocol.WIDGET_FLAG, 0) is not None
+    sys.argv = [a for a in sys.argv if not a.lower().startswith(protocol.SCHEME + ":")]
     root = tk.Tk()
-    App(root, background=background)
+    App(root, background=background or widget, idle_quit=120 if widget else 0)
     root.mainloop()
 
 
