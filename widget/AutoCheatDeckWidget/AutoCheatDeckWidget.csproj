@@ -201,4 +201,20 @@
   <Target Name="AfterBuild">
   </Target>
   -->
+  <ItemGroup>
+    <!-- Full-trust process that starts AutoCheatDeck (a widget can't launch desktop programs itself). -->
+    <Content Include="Launcher\AcdLauncher.exe">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+  <ItemGroup>
+    <SDKReference Include="WindowsDesktop, Version=10.0.22621.0">
+      <Name>Windows Desktop Extensions for the UWP</Name>
+    </SDKReference>
+  </ItemGroup>
+  <!-- Compile the full-trust launcher with the C# compiler that ships with Windows (.NET Framework 4). -->
+  <Target Name="BuildLauncher" BeforeTargets="BeforeBuild"
+          Inputs="Launcher\AcdLauncher.cs" Outputs="Launcher\AcdLauncher.exe">
+    <Exec Command="&quot;$(WINDIR)\Microsoft.NET\Framework64\v4.0.30319\csc.exe&quot; /nologo /target:winexe /out:Launcher\AcdLauncher.exe Launcher\AcdLauncher.cs" />
+  </Target>
 </Project>

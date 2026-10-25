@@ -5,7 +5,9 @@
   xmlns:mp="http://schemas.microsoft.com/appx/2014/phone/manifest"
   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
   xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
-  IgnorableNamespaces="uap uap3 mp">
+  xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap uap3 mp rescap">
 
   <Identity
     Name="JoeysRetroHandhelds.AutoCheatDeckWidget"
@@ -42,6 +44,8 @@
         <uap:SplashScreen Image="Assets\SplashScreen.png" />
       </uap:VisualElements>
       <Extensions>
+        <!-- Starts AutoCheatDeck when the widget needs it (widgets can't launch desktop programs). -->
+        <desktop:Extension Category="windows.fullTrustProcess" Executable="Launcher\AcdLauncher.exe" />
         <uap3:Extension Category="windows.appExtension">
           <uap3:AppExtension Name="microsoft.gameBarUIExtension"
                              Id="CheatWidget"
@@ -120,5 +124,6 @@
   <Capabilities>
     <!-- Talks only to AutoCheatDeck on 127.0.0.1 (needs a loopback exemption, set by the installer). -->
     <Capability Name="privateNetworkClientServer" />
+    <rescap:Capability Name="runFullTrust" />
   </Capabilities>
 </Package>

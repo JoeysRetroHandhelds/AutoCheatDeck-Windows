@@ -4,6 +4,8 @@ using System.Collections.ObjectModel;
 using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
+using Microsoft.Gaming.XboxGameBar;
+using Windows.ApplicationModel;
 using Windows.Data.Json;
 using Windows.System;
 using Windows.UI.Xaml;
@@ -46,6 +48,7 @@ namespace AutoCheatDeckWidget
         private readonly ObservableCollection<GameItem> games = new ObservableCollection<GameItem>();
         private readonly ObservableCollection<CheatItem> cheats = new ObservableCollection<CheatItem>();
         private GameItem current;
+        private XboxGameBarWidget widget;
 
         public CheatWidget()
         {
@@ -63,7 +66,28 @@ namespace AutoCheatDeckWidget
 
         protected override async void OnNavigatedTo(NavigationEventArgs e)
         {
+            widget = e.Parameter as XboxGameBarWidget;
+            // Cheats may have been switched in the trainer itself (or with its hotkeys) while the
+            // widget was hidden: refresh their state every time it becomes visible again.
+            Window.Current.VisibilityChanged += async (sender, args) =>
+            {
+                if (args.Visible && current != null)
+                {
+                    await LoadCheatsAsync(current);
+                }
+            };
             await LoadGamesAsync();
+        }
+
+        /// <summary>Open a link from inside Game Bar (the widget's own launcher; Windows.System.Launcher
+        /// refuses because a widget isn't a foreground app).</summary>
+        private async Task<bool> LaunchUriAsync(Uri uri)
+        {
+            if (widget != null)
+            {
+                return await widget.LaunchUriAsync(uri);
+            }
+            return await Launcher.LaunchUriAsync(uri);
         }
 
         // ---------- API ----------
@@ -99,7 +123,13 @@ namespace AutoCheatDeckWidget
             {
             }
             ShowStatus("Starting AutoCheatDeck...");
-            if (!await Launcher.LaunchUriAsync(new Uri("autocheatdeck:widget")))
+            try
+            {
+                // Our package's full-trust launcher starts AutoCheatDeck (Game Bar won't open links
+                // to desktop programs from a widget).
+                await FullTrustProcessLauncher.LaunchFullTrustProcessForCurrentAppAsync();
+            }
+            catch (Exception)
             {
                 ShowStatus("Couldn't start AutoCheatDeck. Open it once on the desktop so the widget can find it.");
                 return false;

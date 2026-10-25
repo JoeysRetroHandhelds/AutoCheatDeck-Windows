@@ -91,7 +91,9 @@ namespace AutoCheatDeckWidget
                         await rootFrame.Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Normal,
                             () => rootFrame.RequestedTheme = sender.RequestedTheme);
                     };
-                    rootFrame.Navigate(typeof(CheatWidget));
+                    // The page needs the widget object to launch links (a widget can't use
+                    // Windows.System.Launcher directly).
+                    rootFrame.Navigate(typeof(CheatWidget), widget1);
 
                     Window.Current.Closed += CheatWidgetWindow_Closed;
 
