@@ -43,6 +43,29 @@ Add-Type -Namespace Acd -Name Native -MemberDefinition @'
 [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
 [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hWnd);
 [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, int flags, IntPtr extra);
+[DllImport("user32.dll")] public static extern int GetWindowThreadProcessId(IntPtr hWnd, out int pid);
+[DllImport("user32.dll", CharSet = CharSet.Unicode)]
+public static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder text, int max);
+[DllImport("user32.dll", CharSet = CharSet.Unicode)]
+public static extern int GetClassName(IntPtr hWnd, System.Text.StringBuilder text, int max);
+[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+public struct STARTUPINFO {
+    public int cb; public string lpReserved; public string lpDesktop; public string lpTitle;
+    public int dwX; public int dwY; public int dwXSize; public int dwYSize; public int dwXCountChars;
+    public int dwYCountChars; public int dwFillAttribute; public int dwFlags; public short wShowWindow;
+    public short cbReserved2; public IntPtr lpReserved2; public IntPtr hStdInput; public IntPtr hStdOutput;
+    public IntPtr hStdError;
+}
+[StructLayout(LayoutKind.Sequential)]
+public struct PROCESS_INFORMATION {
+    public IntPtr hProcess; public IntPtr hThread; public int dwProcessId; public int dwThreadId;
+}
+[DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+public static extern bool CreateProcess(string app, string cmd, IntPtr pa, IntPtr ta, bool inherit, int flags,
+    IntPtr env, string dir, ref STARTUPINFO si, out PROCESS_INFORMATION pi);
+[DllImport("kernel32.dll")] public static extern bool CloseHandle(IntPtr h);
+[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(string cls, string title);
+[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int cmd);
 '@
 $GWL_EXSTYLE = -20
 $WS_EX_NOACTIVATE = 0x08000000
@@ -63,8 +86,9 @@ function Get-Rows($title, [bool]$refresh) {
     if ($refresh -or -not $entry -or -not [Acd.Native]::IsWindow($entry.hwnd)) {
         $win = Find-Trainer $title
         $walker = [Windows.Automation.TreeWalker]::ControlViewWalker
-        $buttonCond = New-Object Windows.Automation.PropertyCondition ($auto::AutomationIdProperty), 'm_toggle_button'
-        $nameCond = New-Object Windows.Automation.PropertyCondition ($auto::AutomationIdProperty), 'm_label_option_name'
+        $idProp = $auto::AutomationIdProperty
+        $buttonCond = New-Object Windows.Automation.PropertyCondition $idProp, 'm_toggle_button'
+        $nameCond = New-Object Windows.Automation.PropertyCondition $idProp, 'm_label_option_name'
         $rows = New-Object System.Collections.ArrayList
         foreach ($button in $win.FindAll($scope::Descendants, $buttonCond)) {
             $row = $walker.GetParent($button)
@@ -77,6 +101,16 @@ function Get-Rows($title, [bool]$refresh) {
         $cache[$title] = $entry
     }
     return $entry
+}
+function Describe-Window($hwnd) {
+    $text = New-Object System.Text.StringBuilder 200
+    $class = New-Object System.Text.StringBuilder 200
+    [void][Acd.Native]::GetWindowText($hwnd, $text, 200)
+    [void][Acd.Native]::GetClassName($hwnd, $class, 200)
+    $windowPid = 0
+    [void][Acd.Native]::GetWindowThreadProcessId($hwnd, [ref]$windowPid)
+    $name = try { (Get-Process -Id $windowPid -ErrorAction Stop).ProcessName } catch { '?' }
+    return ("{0} [{1}] '{2}'" -f $name, $class.ToString(), $text.ToString())
 }
 function Is-On($toggle) { return ($toggle.Current.ToggleState -eq 'On') }
 function Read-States($title, [bool]$refresh) {
@@ -102,10 +136,14 @@ function Toggle-Cheat($title, $name, [bool]$refresh) {
     } finally {
         [void][Acd.Native]::SetWindowLong($entry.hwnd, $GWL_EXSTYLE, $style)
     }
-    if ([Acd.Native]::GetForegroundWindow() -ne $foreground) {
+    $afterToggle = [Acd.Native]::GetForegroundWindow()
+    $script:focusReport = "before: " + (Describe-Window $foreground) + `
+        " | after toggle: " + (Describe-Window $afterToggle)
+    if ($afterToggle -ne $foreground) {
         [Acd.Native]::keybd_event(0x12, 0, 0, [IntPtr]::Zero)  # Alt tap: lets us set the foreground
         [Acd.Native]::keybd_event(0x12, 0, 2, [IntPtr]::Zero)
         [void][Acd.Native]::SetForegroundWindow($foreground)
+        $script:focusReport += " | after restore: " + (Describe-Window ([Acd.Native]::GetForegroundWindow()))
     }
     return (Is-On $row.toggle)
 }
@@ -118,8 +156,36 @@ while ($true) {
         switch ($req.cmd) {
             'ping' { $res = @{ ok = $true } }
             'launch' {
-                Start-Process -FilePath $req.path -WorkingDirectory (Split-Path $req.path)
-                $res = @{ ok = $true }
+                # Start the trainer minimized and without taking focus: a new window in front would
+                # close Game Bar's overlay, and the widget is how the cheats get used anyway.
+                $si = New-Object Acd.Native+STARTUPINFO
+                $si.cb = [Runtime.InteropServices.Marshal]::SizeOf($si)
+                $si.dwFlags = 1          # STARTF_USESHOWWINDOW
+                $si.wShowWindow = 7      # SW_SHOWMINNOACTIVE
+                $pi = New-Object Acd.Native+PROCESS_INFORMATION
+                $cmdLine = '"' + $req.path + '"'
+                # [NullString]::Value: PowerShell would pass $null as an empty string.
+                $none = [IntPtr]::Zero
+                if (-not [Acd.Native]::CreateProcess([NullString]::Value, $cmdLine, $none, $none, $false, 0,
+                        $none, (Split-Path $req.path), [ref]$si, [ref]$pi)) {
+                    $err = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+                    throw ("Couldn't start the trainer (error " + $err + ")")
+                }
+                [void][Acd.Native]::CloseHandle($pi.hProcess)
+                [void][Acd.Native]::CloseHandle($pi.hThread)
+                # FLiNG trainers ignore that and open in front anyway (which closes Game Bar). Once the
+                # window shows up, minimize it so focus falls back to the game.
+                $deadline = (Get-Date).AddSeconds(20)
+                $hwnd = [IntPtr]::Zero
+                while ($hwnd -eq [IntPtr]::Zero -and (Get-Date) -lt $deadline) {
+                    Start-Sleep -Milliseconds 100
+                    $hwnd = [Acd.Native]::FindWindow([NullString]::Value, $req.title)
+                }
+                if ($hwnd -ne [IntPtr]::Zero) {
+                    Start-Sleep -Milliseconds 300   # let it finish showing before minimizing
+                    [void][Acd.Native]::ShowWindow($hwnd, 6)   # SW_MINIMIZE: activates the next window
+                }
+                $res = @{ ok = $true; minimized = ($hwnd -ne [IntPtr]::Zero) }
             }
             'dump' {
                 $win = Find-Trainer $req.title
@@ -140,7 +206,7 @@ while ($true) {
                 catch [Windows.Automation.ElementNotAvailableException] {
                     $on = Toggle-Cheat $req.title $req.name $true
                 }
-                $res = @{ ok = $true; on = $on }
+                $res = @{ ok = $true; on = $on; focus = $script:focusReport }
             }
             'quit' { $writer.WriteLine('{"ok":true}'); exit 0 }
             default { throw ("Unknown command " + $req.cmd) }
@@ -240,7 +306,7 @@ class Helper:
     # Convenience wrappers
 
     def launch(self, trainer_path: str) -> None:
-        self.request("launch", path=trainer_path)
+        self.request("launch", path=trainer_path, title=trainer_title(trainer_path))
 
     def dump(self, trainer_title: str) -> list[str]:
         return list(self.request("dump", title=trainer_title).get("lines") or [])
@@ -251,7 +317,9 @@ class Helper:
         return {r["name"]: {"on": bool(r["on"]), "kind": r.get("kind", "")} for r in rows}
 
     def toggle(self, trainer_title: str, cheat_name: str) -> bool:
-        return bool(self.request("toggle", title=trainer_title, name=cheat_name).get("on"))
+        reply = self.request("toggle", title=trainer_title, name=cheat_name)
+        log.get().info("helper: toggle %s, focus %s", cheat_name, reply.get("focus"))
+        return bool(reply.get("on"))
 
 
 def trainer_title(trainer_path: str) -> str:
