@@ -11,12 +11,13 @@ prompt. Turning the option off just marks location.json disabled (no prompt eith
 then does nothing. Approach ported from RAOfflineProxy's Windows build.
 """
 
-import base64
 import json
 import os
 import subprocess
 import sys
 import winreg
+
+from . import elevate
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 RUN_VALUE = "AutoCheatDeck"
@@ -81,27 +82,11 @@ def launcher_command() -> list[str]:
     return command
 
 
-def _ps_literal(value: str) -> str:
-    return "'" + value.replace("'", "''") + "'"
-
-
-def encoded_script(script: str, **values: str) -> str:
-    """The script with `values` set as $variables first, base64 UTF-16 for -EncodedCommand."""
-    prelude = "".join("${} = {}\n".format(name, _ps_literal(value)) for name, value in values.items())
-    return base64.b64encode((prelude + script.lstrip()).encode("utf-16-le")).decode("ascii")
-
-
 def _run_elevated(script: str, **values: str) -> bool:
-    """Run a PowerShell script elevated (one UAC prompt) and wait. Inline as -EncodedCommand, never
-    via a file the user could swap before the elevated PowerShell reads it. False if the prompt was
-    declined or the script failed."""
-    encoded = encoded_script(script, **values)
-    outer = ("try { $p = Start-Process powershell.exe -Verb RunAs -Wait -PassThru -WindowStyle Hidden "
-             "-ArgumentList '-NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand " + encoded + "'; "
-             "exit $p.ExitCode } catch { exit 1223 }")
-    result = subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", outer],
-                            capture_output=True, creationflags=NO_WINDOW, timeout=300, check=False)
-    return result.returncode == 0
+    return elevate.run_powershell(script, **values)
+
+
+encoded_script = elevate.encoded_script
 
 
 def task_exists() -> bool:
