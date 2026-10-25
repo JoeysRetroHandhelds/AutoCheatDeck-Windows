@@ -82,8 +82,11 @@ class App:
         self._refresh_controller_status()
 
         # A portable folder can move; keep the startup entry pointing at this copy.
-        if self.app_dir and startup.is_enabled():
-            startup.enable(startup.command_for(sys.executable))
+        if self.app_dir:
+            try:
+                startup.refresh(sys.executable)
+            except OSError:
+                log.get().exception("startup: could not refresh the sign-in launcher")
         from .tray import Tray
 
         self.tray = Tray(on_show=lambda: self.post(self.show_window), on_quit=lambda: self.post(self.quit))
@@ -526,16 +529,33 @@ class App:
         self._fill_list()
 
     def _toggle_startup(self) -> None:
-        try:
-            if self.startup_on.get():
-                if not self.app_dir:
-                    raise OSError("Start with Windows only works from the packaged app.")
-                startup.enable(startup.command_for(sys.executable))
-            else:
+        if not self.startup_on.get():
+            try:
                 startup.disable()
-        except OSError as e:
+            except OSError as e:
+                messagebox.showerror("AutoCheatDeck", str(e), parent=self.root)
             self.startup_on.set(startup.is_enabled())
-            messagebox.showerror("AutoCheatDeck", str(e), parent=self.root)
+            return
+        if not self.app_dir:
+            self.startup_on.set(False)
+            messagebox.showinfo("AutoCheatDeck", "Start with Windows only works from the packaged app.",
+                                parent=self.root)
+            return
+
+        def done(mode: str) -> None:
+            self.set_status("")
+            self.startup_on.set(startup.is_enabled())
+            log.get().info("startup: enabled via %s", mode)
+            if mode == "run":
+                messagebox.showinfo(
+                    "AutoCheatDeck",
+                    "AutoCheatDeck will start with Windows on the desktop.\n\nThe Xbox full screen "
+                    "experience only runs startup tasks, which needs one administrator approval. Untick "
+                    "and tick Start with Windows again to approve it.",
+                    parent=self.root,
+                )
+
+        self.run_bg(lambda: startup.enable(sys.executable), done, "Setting up Start with Windows...")
 
     # ---------- controller ----------
 

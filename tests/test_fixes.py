@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from autocheatdeck import fling, gamepad, startup, steam
+from autocheatdeck import fling, gamepad, steam
 from autocheatdeck.watcher import Watcher
 
 GAME = r"C:\Games\Hades"
@@ -124,12 +124,6 @@ class GamepadTest(unittest.TestCase):
         self.assertEqual(r.update({"down", "a"}, 0.53), ["down"])
         self.assertEqual(r.update(set(), 0.6), [])
         self.assertEqual(r.update({"a"}, 0.7), ["a"])
-
-
-class StartupTest(unittest.TestCase):
-    def test_command_quotes_path_and_starts_in_background(self):
-        self.assertEqual(startup.command_for(r"C:\Games\Auto Cheat\AutoCheatDeck.exe"),
-                         '"C:\\Games\\Auto Cheat\\AutoCheatDeck.exe" --background')
 
 
 if __name__ == "__main__":

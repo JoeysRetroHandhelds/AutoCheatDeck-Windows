@@ -21,7 +21,7 @@ The whole app works with an Xbox-style controller or the keyboard (arrows, Enter
 
 ### Start with Windows
 
-Tick **Start with Windows** to launch AutoCheatDeck into the tray at sign-in, so trainers start with your games without opening it first. This uses your user's startup list (no admin needed) and also works with the Xbox full screen experience on handhelds; switch to it there with Windows' task switcher, or add AutoCheatDeck.exe to the Xbox app as a game and open it from there. If you move the folder, open the app once from its new place and it updates the startup entry.
+Tick **Start with Windows** to launch AutoCheatDeck into the tray at sign-in, so trainers start with your games without opening it first. The Xbox full screen experience on handhelds skips ordinary startup apps, so this registers a sign-in task instead, which needs one administrator approval when you tick it (the task itself runs as you, not as admin). Decline it and AutoCheatDeck still starts with Windows on the desktop. Moving the folder or turning the option off needs no further approval.
 
 Updates: **Check for updates** / **Install update** downloads the new version, swaps the app files (your `data` folder is untouched) and restarts; **Restore previous version** swaps back.
 
