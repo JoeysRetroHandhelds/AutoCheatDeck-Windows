@@ -92,7 +92,25 @@ namespace AutoCheatDeckWidget
 
         // ---------- API ----------
 
-        private static async Task<JsonObject> CallAsync(HttpMethod method, string path, JsonObject body = null)
+        /// <summary>A request to AutoCheatDeck; if it isn't running (it quits a couple of minutes after
+        /// the widget goes quiet), start it again and retry once.</summary>
+        private async Task<JsonObject> CallAsync(HttpMethod method, string path, JsonObject body = null)
+        {
+            try
+            {
+                return await SendAsync(method, path, body);
+            }
+            catch (HttpRequestException)
+            {
+                if (!await EnsureAppAsync())
+                {
+                    throw;
+                }
+                return await SendAsync(method, path, body);
+            }
+        }
+
+        private static async Task<JsonObject> SendAsync(HttpMethod method, string path, JsonObject body = null)
         {
             var request = new HttpRequestMessage(method, BaseUrl + path);
             if (body != null)
@@ -116,7 +134,7 @@ namespace AutoCheatDeckWidget
         {
             try
             {
-                await CallAsync(HttpMethod.Get, "/api/games");
+                await SendAsync(HttpMethod.Get, "/api/games");
                 return true;
             }
             catch (HttpRequestException)
@@ -139,7 +157,7 @@ namespace AutoCheatDeckWidget
                 await Task.Delay(500);
                 try
                 {
-                    await CallAsync(HttpMethod.Get, "/api/games");
+                    await SendAsync(HttpMethod.Get, "/api/games");
                     return true;
                 }
                 catch (HttpRequestException)

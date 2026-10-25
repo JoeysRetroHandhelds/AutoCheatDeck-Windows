@@ -57,6 +57,9 @@ def main() -> None:
     widget = _take_arg(protocol.WIDGET_FLAG, 0) is not None
     sys.argv = [a for a in sys.argv if not a.lower().startswith(protocol.SCHEME + ":")]
     root = tk.Tk()
+    if background or widget:
+        # Hide before anything is built: a window flashing up would take focus (and close Game Bar).
+        root.withdraw()
     App(root, background=background or widget, idle_quit=120 if widget else 0)
     root.mainloop()
 

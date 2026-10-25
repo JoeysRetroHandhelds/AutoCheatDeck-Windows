@@ -66,6 +66,7 @@ public static extern bool CreateProcess(string app, string cmd, IntPtr pa, IntPt
 [DllImport("kernel32.dll")] public static extern bool CloseHandle(IntPtr h);
 [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(string cls, string title);
 [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int cmd);
+[DllImport("user32.dll", SetLastError = true)] public static extern bool LockSetForegroundWindow(int code);
 '@
 $GWL_EXSTYLE = -20
 $WS_EX_NOACTIVATE = 0x08000000
@@ -128,6 +129,11 @@ function Toggle-Cheat($title, $name, [bool]$refresh) {
     $foreground = [Acd.Native]::GetForegroundWindow()
     $style = [Acd.Native]::GetWindowLong($entry.hwnd, $GWL_EXSTYLE)
     [void][Acd.Native]::SetWindowLong($entry.hwnd, $GWL_EXSTYLE, ($style -bor $WS_EX_NOACTIVATE))
+    # The trainer brings its own window to the front when an option changes; lock foreground
+    # changes for the moment of the toggle so Game Bar keeps focus.
+    $locked = [Acd.Native]::LockSetForegroundWindow(1)   # LSFW_LOCK
+    $lockError = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+    $script:lockReport = "lock: " + $locked + $(if (-not $locked) { " (error " + $lockError + ")" })
     try {
         $row.toggle.Toggle()
         # The trainer applies the change asynchronously: wait (briefly) until the state flips.
@@ -135,10 +141,11 @@ function Toggle-Cheat($title, $name, [bool]$refresh) {
         while ((Is-On $row.toggle) -eq $before -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 25 }
     } finally {
         [void][Acd.Native]::SetWindowLong($entry.hwnd, $GWL_EXSTYLE, $style)
+        if ($locked) { [void][Acd.Native]::LockSetForegroundWindow(2) }   # LSFW_UNLOCK
     }
     $afterToggle = [Acd.Native]::GetForegroundWindow()
     $script:focusReport = "before: " + (Describe-Window $foreground) + `
-        " | after toggle: " + (Describe-Window $afterToggle)
+        " | after toggle: " + (Describe-Window $afterToggle) + " | " + $script:lockReport
     if ($afterToggle -ne $foreground) {
         [Acd.Native]::keybd_event(0x12, 0, 0, [IntPtr]::Zero)  # Alt tap: lets us set the foreground
         [Acd.Native]::keybd_event(0x12, 0, 2, [IntPtr]::Zero)
