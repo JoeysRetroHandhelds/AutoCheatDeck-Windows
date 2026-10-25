@@ -9,9 +9,9 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Any, Callable
 
-from . import __version__, config, fling, log, processes, startup, steam, updater
+from . import __version__, config, fling, launcher, log, processes, startup, steam, updater
 from .watcher import Watcher
-from .winapi import WINDOW_TITLE
+from .winapi import WINDOW_TITLE, listen_for_show
 
 FONT = ("Segoe UI", 12)
 # Keyboard keys drive the same navigation as the controller. Handhelds such as the ROG Ally send
@@ -69,7 +69,7 @@ class App:
             list_processes=lambda: list(processes.running_exe_paths().values()),
             launch=lambda appid, path: self.post(lambda: self._auto_launch(appid, path)),
             delay=lambda: float(self.cfg.data.get("launchDelay", 5)),
-            on_change=lambda running: self.post(self._update_game_state),
+            on_change=self._on_running_change,
         )
         self.watcher.start()
 
@@ -83,8 +83,12 @@ class App:
         # A portable folder can move; keep the startup entry pointing at this copy.
         if self.app_dir and startup.is_enabled():
             startup.enable(startup.command_for(sys.executable))
+        from .tray import Tray
+
+        self.tray = Tray(on_show=lambda: self.post(self.show_window), on_quit=lambda: self.post(self.quit))
+        listen_for_show(lambda: self.post(self.show_window))
         if background:
-            root.iconify()
+            root.withdraw()  # started with Windows: live in the tray until asked for
 
         if self.app_dir:
             updater.cleanup(self.app_dir)
@@ -92,7 +96,7 @@ class App:
         if self.cfg.data.get("checkUpdates", True):
             self.check_app_update(quiet=True)
 
-        root.protocol("WM_DELETE_WINDOW", self.quit)
+        root.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
         root.after(100, self._drain_events)
 
     # ---------- plumbing ----------
@@ -139,9 +143,24 @@ class App:
     def set_status(self, text: str) -> None:
         self.status.configure(text=text)
 
+    def hide_to_tray(self) -> None:
+        self.root.withdraw()
+        if not self.cfg.data.get("trayNoticeShown"):
+            self.cfg.data["trayNoticeShown"] = True
+            self.cfg.save()
+            self.tray.notify("Still running in the tray so trainers start with your games. "
+                             "Right-click the tray icon to quit.")
+
+    def show_window(self) -> None:
+        self.root.deiconify()
+        self.root.lift()
+        self.root.focus_force()
+        self.tree.focus_set()
+
     def quit(self) -> None:
         self.watcher.stop()
         self.gamepad.stop()
+        self.tray.stop()
         self.root.destroy()
 
     # ---------- layout ----------
@@ -185,7 +204,7 @@ class App:
         self.delay.trace_add("write", lambda *_: self._save_delay())
         ttk.Spinbox(bottom, from_=0, to=120, width=5, textvariable=self.delay).pack(side="left", padx=(6, 18))
         self.startup_on = tk.BooleanVar(value=startup.is_enabled())
-        ttk.Checkbutton(bottom, text="Start with Windows (minimized)", variable=self.startup_on,
+        ttk.Checkbutton(bottom, text="Start with Windows (in tray)", variable=self.startup_on,
                         command=self._toggle_startup).pack(side="left")
 
         updates = ttk.Frame(self.root, padding=(12, 0, 12, 8))
@@ -265,13 +284,20 @@ class App:
         has_trainer = bool(entry and os.path.isfile(entry.get("path", "")))
         if has_trainer:
             ttk.Label(self.detail, text=entry["title"], wraplength=self.px(360)).pack(anchor="w", pady=(16, 8))
-            auto = tk.BooleanVar(value=entry.get("autoLaunch", True))
-            ttk.Checkbutton(self.detail, text="Start trainer when the game starts", variable=auto,
-                            command=lambda: self._set_auto(game.appid, auto.get())).pack(anchor="w", pady=4)
-            self.game_state = ttk.Label(self.detail, text="", foreground="#777", wraplength=self.px(360))
-            self.game_state.pack(anchor="w", pady=(0, 8))
-            self._update_game_state()
-            buttons = [
+            if entry.get("steamLaunch"):
+                ttk.Label(self.detail, text="Trainer starts through the game's Steam launch option.",
+                          foreground="#2f7d32", wraplength=self.px(360)).pack(anchor="w", pady=(0, 8))
+                launch_buttons = [("Stop using the Steam launch option", lambda: self.use_steam_launch(game, False))]
+            else:
+                auto = tk.BooleanVar(value=entry.get("autoLaunch", True))
+                ttk.Checkbutton(self.detail, text="Start trainer when the game starts", variable=auto,
+                                command=lambda: self._set_auto(game.appid, auto.get())).pack(anchor="w", pady=4)
+                self.game_state = ttk.Label(self.detail, text="", foreground="#777", wraplength=self.px(360))
+                self.game_state.pack(anchor="w", pady=(0, 8))
+                self._update_game_state()
+                launch_buttons = [("Use Steam launch option (most reliable)",
+                                   lambda: self.use_steam_launch(game, True))]
+            buttons = launch_buttons + [
                 ("Launch trainer now", lambda: self._launch_now(entry["path"])),
                 ("Check for trainer update", lambda: self.check_trainer_update(game.appid)),
                 ("Find a different trainer", self.find_trainer),
@@ -283,6 +309,11 @@ class App:
             buttons = [("Find trainer online", self.find_trainer)]
         for label, command in buttons:
             ttk.Button(self.detail, text=label, command=command).pack(fill="x", pady=4)
+
+    def _on_running_change(self, running: set[str]) -> None:
+        names = sorted(self.by_id[a].name for a in running if a in self.by_id)
+        log.get().info("watcher: games running: %s", names or "none")
+        self.post(self._update_game_state)
 
     def _update_game_state(self) -> None:
         label = getattr(self, "game_state", None)
@@ -297,6 +328,37 @@ class App:
         else:
             label.configure(text="Game not running. If it is running and this doesn't change, "
                                  "the game may hide its process (anti-cheat); use Launch trainer now.")
+
+    def use_steam_launch(self, game: steam.Game, enable: bool) -> None:
+        entry = self.cfg.game(game.appid)
+        if not entry:
+            return
+        if enable:
+            if not self.app_dir:
+                messagebox.showinfo("AutoCheatDeck", "The Steam launch option only works from the packaged app.",
+                                    parent=self.root)
+                return
+            option = launcher.launch_option(sys.executable, game.appid)
+            self.root.clipboard_clear()
+            self.root.clipboard_append(option)
+            messagebox.showinfo(
+                "Steam launch option copied",
+                "In Steam: right-click {} > Properties > General > Launch options, and paste:\n\n{}\n\n"
+                "Steam will then start the trainer with the game every time, from Steam, Big Picture "
+                "or Xbox mode, without AutoCheatDeck running in the background. If you move the "
+                "AutoCheatDeck folder, copy the option again.".format(game.name, option),
+                parent=self.root,
+            )
+        else:
+            messagebox.showinfo(
+                "AutoCheatDeck",
+                "Remove the AutoCheatDeck text from {}'s Steam launch options (Properties > General). "
+                "AutoCheatDeck will go back to starting the trainer when it sees the game.".format(game.name),
+                parent=self.root,
+            )
+        entry["steamLaunch"] = enable
+        self.cfg.set_game(game.appid, entry)
+        self._show_selected()
 
     def _set_auto(self, appid: str, value: bool) -> None:
         entry = self.cfg.game(appid)
@@ -318,16 +380,19 @@ class App:
         targets = {}
         for appid, entry in list(self.cfg.data["games"].items()):
             game = self.by_id.get(appid)
-            if game and entry.get("autoLaunch", True) and os.path.isfile(entry.get("path", "")):
+            if (game and entry.get("autoLaunch", True) and not entry.get("steamLaunch")
+                    and os.path.isfile(entry.get("path", ""))):
                 targets[appid] = (game.install_dir, entry["path"])
         return targets
 
     def _auto_launch(self, appid: str, path: str) -> None:
         game = self.by_id.get(appid)
+        log.get().info("watcher: starting trainer for %s: %s", game.name if game else appid, path)
         try:
             launch_trainer(path)
             self.set_status("Started trainer for {}".format(game.name if game else appid))
         except Exception as e:  # a missed game-start launch must be visible, not just a status line
+            log.get().exception("watcher: could not start trainer")
             self.set_status("Could not start trainer: {}".format(e))
             messagebox.showerror("AutoCheatDeck", "Could not start the trainer:\n\n{}".format(e), parent=self.root)
 
