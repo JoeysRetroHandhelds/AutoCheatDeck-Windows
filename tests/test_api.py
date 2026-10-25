@@ -7,8 +7,9 @@ from autocheatdeck import api
 
 class FakeBackend(api.Backend):
     def __init__(self):
-        self.pressed: list[str] = []
+        self.toggled: list[str] = []
         self.launched: list[str] = []
+        self.activity = 0
 
     def api_games(self):
         return [{"id": "1", "name": "Hades", "source": "Steam", "trainer": "T", "hasCheats": True}]
@@ -23,10 +24,14 @@ class FakeBackend(api.Backend):
     def api_read(self, appid):
         return {"cheats": []}
 
-    def api_press(self, key):
-        if key != "Num 1":
-            raise ValueError("Unrecognised hotkey: " + key)
-        self.pressed.append(key)
+    def api_toggle(self, appid, name):
+        if name != "Infinite HP":
+            raise ValueError("No cheat named " + name)
+        self.toggled.append(name)
+        return {"on": True}
+
+    def api_activity(self):
+        self.activity += 1
 
 
 class ApiTest(unittest.TestCase):
@@ -51,22 +56,30 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(self.request("GET", "/api/games/1/cheats")[1]["cheats"][0]["name"], "Infinite HP")
         self.assertEqual(self.request("GET", "/api/games/2/cheats")[1], {"cheats": None})
 
-    def test_launch_and_press(self):
+    def test_launch_and_toggle(self):
         self.assertEqual(self.request("POST", "/api/games/1/launch")[0], 200)
         self.assertEqual(self.backend.launched, ["1"])
-        self.assertEqual(self.request("POST", "/api/press", {"key": "Num 1"}), (200, {"ok": True}))
-        self.assertEqual(self.request("POST", "/api/press", {"key": "Banana"})[0], 400)
-        self.assertEqual(self.backend.pressed, ["Num 1"])
+        self.assertEqual(self.request("POST", "/api/games/1/toggle", {"name": "Infinite HP"}), (200, {"on": True}))
+        self.assertEqual(self.request("POST", "/api/games/1/toggle", {"name": "Banana"})[0], 400)
+        self.assertEqual(self.backend.toggled, ["Infinite HP"])
+        self.assertEqual(self.request("POST", "/api/press", {"key": "Num 1"})[0], 404)  # gone: trainers ignore it
+
+    def test_every_request_counts_as_activity(self):
+        self.request("GET", "/api/games")
+        self.request("GET", "/api/games/1/cheats")
+        self.assertEqual(self.backend.activity, 2)
 
     def test_requests_without_the_header_are_refused(self):
-        self.assertEqual(self.request("POST", "/api/press", {"key": "Num 1"}, {api.HEADER: None})[0], 403)
-        self.assertEqual(self.backend.pressed, [])
+        status, _ = self.request("POST", "/api/games/1/toggle", {"name": "Infinite HP"}, {api.HEADER: None})
+        self.assertEqual(status, 403)
+        self.assertEqual(self.backend.toggled, [])
 
     def test_browser_requests_are_refused(self):
-        status, _ = self.request("POST", "/api/press", {"key": "Num 1"}, {"Origin": "https://evil.example"})
+        status, _ = self.request("POST", "/api/games/1/toggle", {"name": "Infinite HP"},
+                                 {"Origin": "https://evil.example"})
         self.assertEqual(status, 403)
-        self.assertEqual(self.request("OPTIONS", "/api/press")[0], 403)
-        self.assertEqual(self.backend.pressed, [])
+        self.assertEqual(self.request("OPTIONS", "/api/games/1/toggle")[0], 403)
+        self.assertEqual(self.backend.toggled, [])
 
     def test_unknown_paths(self):
         self.assertEqual(self.request("GET", "/api/nope")[0], 404)
@@ -76,6 +89,14 @@ class ApiTest(unittest.TestCase):
         self.server.stop()
         with self.assertRaises(OSError):
             http.client.HTTPConnection("127.0.0.1", self.server.port, timeout=2).request("GET", "/api/games")
+
+
+class ProtocolTest(unittest.TestCase):
+    def test_link_starts_the_app_in_widget_mode(self):
+        from autocheatdeck import protocol
+
+        self.assertEqual(protocol.command_for(r"C:\Apps\AutoCheatDeck\AutoCheatDeck.exe"),
+                         r'"C:\Apps\AutoCheatDeck\AutoCheatDeck.exe" --widget "%1"')
 
 
 if __name__ == "__main__":

@@ -6,10 +6,12 @@ is never answered), so a web page can't drive it. The thread sleeps in accept() 
 so the API costs nothing while unused.
 
   GET  /api/games                    games that have a trainer
-  GET  /api/games/<id>/cheats        cached cheats ({"cheats": [...]} or {"cheats": null})
+  GET  /api/games/<id>/cheats        cheats with live on/off state ({"cheats": [...]} or {"cheats": null})
   POST /api/games/<id>/launch        start the trainer (reads its cheats if not cached yet)
-  POST /api/games/<id>/read          (re)read the running trainer's cheats (one UAC prompt)
-  POST /api/press                    {"key": "Ctrl+Num 1"} press a trainer hotkey
+  POST /api/games/<id>/read          (re)read the running trainer's cheats
+  POST /api/games/<id>/toggle        {"name": "Infinite HP"} switch a cheat; returns {"on": bool}
+
+Launching, reading and toggling go through the admin helper (one UAC prompt per session).
 """
 
 import json
@@ -23,7 +25,7 @@ from . import log
 
 PORT = 47120
 HEADER = "X-AutoCheatDeck"
-_GAME = re.compile(r"^/api/games/([A-Za-z0-9._-]+)/(cheats|launch|read)$")
+_GAME = re.compile(r"^/api/games/([A-Za-z0-9._-]+)/(cheats|launch|read|toggle)$")
 
 
 class Backend:
@@ -41,8 +43,11 @@ class Backend:
     def api_read(self, appid: str) -> dict:
         raise NotImplementedError
 
-    def api_press(self, key: str) -> None:
+    def api_toggle(self, appid: str, name: str) -> dict:
         raise NotImplementedError
+
+    def api_activity(self) -> None:
+        """Called on every request (e.g. to postpone an idle shutdown)."""
 
 
 def _handler(backend: Backend) -> type:
@@ -62,6 +67,8 @@ def _handler(backend: Backend) -> type:
             self.wfile.write(data)
 
         def _allowed(self) -> bool:
+            log.get().info("api: %s %s", self.command, self.path)
+            backend.api_activity()
             if self.headers.get(HEADER) != "1" or self.headers.get("Origin") is not None:
                 self._reply(403, {"error": "forbidden"})
                 return False
@@ -93,14 +100,13 @@ def _handler(backend: Backend) -> type:
             if not self._allowed():
                 return
             try:
-                if self.path == "/api/press":
-                    backend.api_press(str(self._body().get("key", "")))
-                    return self._reply(200, {"ok": True})
                 match = _GAME.match(self.path)
                 if match and match.group(2) == "launch":
                     return self._reply(200, backend.api_launch(match.group(1)))
                 if match and match.group(2) == "read":
                     return self._reply(200, backend.api_read(match.group(1)))
+                if match and match.group(2) == "toggle":
+                    return self._reply(200, backend.api_toggle(match.group(1), str(self._body().get("name", ""))))
                 self._reply(404, {"error": "not found"})
             except ValueError as e:
                 self._reply(400, {"error": str(e)})

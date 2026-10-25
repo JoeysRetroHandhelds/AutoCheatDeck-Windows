@@ -14,7 +14,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Any, Callable
 
-from . import __version__, api, cheats, config, fling, library, log, startup, steam, updater
+from . import __version__, api, cheats, config, fling, helper, library, log, protocol, startup, steam, updater
 from .winapi import WINDOW_TITLE, listen_for_show
 
 FONT = ("Segoe UI", 12)
@@ -52,12 +52,18 @@ class Dialogs:
 
 
 class App(api.Backend):
-    def __init__(self, root: tk.Tk, background: bool = False):
+    def __init__(self, root: tk.Tk, background: bool = False, idle_quit: int = 0):
         self.root = root
         self.hidden = False
+        # Started by the widget: quit this many seconds after its last request, unless the user
+        # opens the window (then it behaves like a normal start). 0 = never.
+        self.idle_quit = idle_quit
+        self._idle_job = None
         self.cfg = config.Config()
         log.get().info("AutoCheatDeck %s starting (frozen=%s)", __version__, getattr(sys, "frozen", False))
         self.games: list[steam.Game] = []
+        # Set once the game library has been read; the widget's first request waits for it.
+        self._games_ready = threading.Event()
         self.by_id: dict[str, steam.Game] = {}
         self._events: queue.Queue[Callable[[], None]] = queue.Queue()
         # Updates only apply to the packaged app; None when running from source.
@@ -107,6 +113,10 @@ class App(api.Backend):
         # A portable folder can move; keep the startup entry pointing at this copy.
         if self.app_dir:
             try:
+                protocol.register(sys.executable)  # lets the widget start us
+            except OSError:
+                log.get().exception("protocol: could not register the autocheatdeck: link")
+            try:
                 startup.refresh(sys.executable)
             except OSError:
                 log.get().exception("startup: could not refresh the sign-in launcher")
@@ -124,6 +134,8 @@ class App(api.Backend):
             self.check_app_update(quiet=True)
 
         # Local API for the Game Bar widget (sleeps in accept() until a request arrives).
+        # Admin helper for launching trainers and switching cheats (started on first use).
+        self.helper = helper.Helper()
         self.api = api.Server(self, on_error=lambda text: self.post(lambda: self.set_status(text)))
 
         root.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
@@ -194,6 +206,7 @@ class App(api.Backend):
             self.tray.notify("Still running in the tray. Right-click the tray icon to quit.")
 
     def show_window(self) -> None:
+        self._stop_idle_quit()  # the user is here: stay like a normal start
         self._set_hidden(False)
         self.root.deiconify()
         self.root.lift()
@@ -202,6 +215,7 @@ class App(api.Backend):
 
     def quit(self) -> None:
         self.api.stop()
+        self.helper.stop()
         self.gamepad.stop()
         self.tray.stop()
         self.root.destroy()
@@ -274,6 +288,7 @@ class App(api.Backend):
         first_load = not self.games
         self.games = games
         self.by_id = {g.appid: g for g in games}
+        self._games_ready.set()
         self.set_status("{} games found, most recently played first".format(len(games))
                         if games else "No games found. Use Add game to add one by hand.")
         self._fill_list()
@@ -416,43 +431,84 @@ class App(api.Backend):
             return None
         return cheats.load_cache(self._cheat_cache(appid), entry["sha256"])
 
-    def read_cheats(self, appid: str, wait_seconds: float = 0) -> dict:
-        """Read the running trainer's cheats (one UAC prompt) and cache them. Runs off the UI thread."""
+    def _trainer(self, appid: str) -> dict:
         entry = self.cfg.game(appid)
         if not entry or not os.path.isfile(entry.get("path", "")):
             raise ValueError("No trainer installed for this game")
+        return entry
+
+    def read_cheats(self, appid: str, wait_seconds: float = 0) -> dict:
+        """Read the running trainer's cheats through the helper and cache them (off the UI thread)."""
+        entry = self._trainer(appid)
         deadline = time.monotonic() + wait_seconds
-        hwnd = cheats.trainer_window(entry["path"])
-        while not hwnd and time.monotonic() < deadline:  # bounded wait for a trainer just started
-            time.sleep(0.5)
-            hwnd = cheats.trainer_window(entry["path"])
-        if not hwnd:
+        while not cheats.trainer_window(entry["path"]) and time.monotonic() < deadline:
+            time.sleep(0.5)  # bounded wait for a trainer that was just started
+        if not cheats.trainer_window(entry["path"]):
             raise ValueError("The trainer isn't running")
-        parsed = cheats.read_running_trainer(hwnd)
+        parsed = cheats.parse_trainer_ui(self.helper.dump(helper.trainer_title(entry["path"])))
+        if not parsed["cheats"]:
+            raise ValueError("No cheats found in the trainer window yet")
         cheats.save_cache(self._cheat_cache(appid), entry["sha256"], parsed)
         log.get().info("cheats: read %d cheats for %s", len(parsed["cheats"]), appid)
         return parsed
 
     # Game Bar API (called on the API server's threads)
 
+    def _restart_idle_timer(self) -> None:
+        if not self.idle_quit:
+            return
+        if self._idle_job is not None:
+            self.root.after_cancel(self._idle_job)
+        self._idle_job = self.root.after(self.idle_quit * 1000, self._idle_expired)
+
+    def _stop_idle_quit(self) -> None:
+        self.idle_quit = 0
+        if self._idle_job is not None:
+            self.root.after_cancel(self._idle_job)
+            self._idle_job = None
+
+    def _idle_expired(self) -> None:
+        self._idle_job = None
+        if self.idle_quit and self.hidden:
+            log.get().info("widget mode: no requests for %ss, quitting", self.idle_quit)
+            self.quit()
+
+    def api_activity(self) -> None:
+        if self.idle_quit:
+            self.post(self._restart_idle_timer)
+
     def api_games(self) -> list[dict]:
+        self._games_ready.wait(15)  # a just-started app is still reading the game library
         result = []
         for game in self.games:
             entry = self.cfg.game(game.appid)
             if entry and os.path.isfile(entry.get("path", "")):
                 result.append({"id": game.appid, "name": game.name, "source": game.source,
-                               "trainer": entry["title"], "hasCheats": self.cached_cheats(game.appid) is not None})
+                               "trainer": entry["title"], "hasCheats": self.cached_cheats(game.appid) is not None,
+                               "running": bool(cheats.trainer_window(entry["path"]))})
         return result
 
-    def api_cheats(self, appid: str) -> dict | None:
+    def api_cheats(self, appid: str) -> list[dict] | None:
+        """Cached cheats, with live on/off state when the trainer is running."""
         cached = self.cached_cheats(appid)
-        return cached["cheats"] if cached else None
+        if not cached:
+            return None
+        entry = self._trainer(appid)
+        states: dict[str, dict] = {}
+        if cheats.trainer_window(entry["path"]):
+            states = self.helper.states(helper.trainer_title(entry["path"]))
+        result = []
+        for cheat in cached["cheats"]:
+            state = states.get(cheat["name"])
+            result.append(dict(cheat, on=state["on"] if state else None, kind=state["kind"] if state else ""))
+        return result
 
     def api_launch(self, appid: str) -> dict:
-        entry = self.cfg.game(appid)
-        if not entry or not os.path.isfile(entry.get("path", "")):
-            raise ValueError("No trainer installed for this game")
-        self.post(lambda: self._launch_now(appid, entry["path"]))
+        entry = self._trainer(appid)
+        if not cheats.trainer_window(entry["path"]):
+            self.helper.launch(entry["path"])  # the helper is elevated: no second prompt for the trainer
+            log.get().info("started trainer %s (via helper)", entry["path"])
+            self.post(lambda: self._record_played({appid}, int(time.time())))
         reading = self.cached_cheats(appid) is None
         if reading:
             def work() -> None:
@@ -467,8 +523,13 @@ class App(api.Backend):
     def api_read(self, appid: str) -> dict:
         return {"cheats": self.read_cheats(appid)["cheats"]}
 
-    def api_press(self, key: str) -> None:
-        cheats.press(key)  # validates the hotkey (ValueError -> 400)
+    def api_toggle(self, appid: str, name: str) -> dict:
+        entry = self._trainer(appid)
+        if not name:
+            raise ValueError("No cheat given")
+        on = self.helper.toggle(helper.trainer_title(entry["path"]), name)
+        log.get().info("cheats: %s -> %s", name, "on" if on else "off")
+        return {"on": on}
 
     def find_trainer(self) -> None:
         game = self.by_id.get(self.selected_appid() or "")

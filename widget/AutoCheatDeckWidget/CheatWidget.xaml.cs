@@ -5,6 +5,7 @@ using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
 using Windows.Data.Json;
+using Windows.System;
 using Windows.UI.Xaml;
 using Windows.UI.Xaml.Controls;
 using Windows.UI.Xaml.Navigation;
@@ -24,12 +25,18 @@ namespace AutoCheatDeckWidget
         public string Key { get; set; }
         public string Name { get; set; }
         public string Note { get; set; }
+        /// <summary>true / false from the running trainer; null when the trainer isn't running.</summary>
+        public bool? On { get; set; }
+        public string State => On == null ? "–" : (On == true ? "ON" : "OFF");
+        public double StateOpacity => On == true ? 1.0 : 0.55;
         public Visibility NoteVisibility => string.IsNullOrEmpty(Note) ? Visibility.Collapsed : Visibility.Visible;
     }
 
     /// <summary>
-    /// Talks to AutoCheatDeck's local API on 127.0.0.1 (the desktop app does the work: launching
-    /// trainers runs them as admin, and pressing cheats sends their hotkeys).
+    /// Talks to AutoCheatDeck's local API on 127.0.0.1. AutoCheatDeck (with its admin helper) does
+    /// the work: starting trainers and switching cheats through the trainer's own toggle buttons.
+    /// If AutoCheatDeck isn't running, the widget starts it through the autocheatdeck: link; it
+    /// quits on its own a couple of minutes after the widget stops using it.
     /// </summary>
     public sealed partial class CheatWidget : Page
     {
@@ -49,7 +56,7 @@ namespace AutoCheatDeckWidget
 
         private static HttpClient CreateClient()
         {
-            var client = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
+            var client = new HttpClient { Timeout = TimeSpan.FromSeconds(90) };
             client.DefaultRequestHeaders.Add("X-AutoCheatDeck", "1");
             return client;
         }
@@ -80,20 +87,60 @@ namespace AutoCheatDeckWidget
             }
         }
 
+        /// <summary>Make sure AutoCheatDeck is running, starting it through its link if needed.</summary>
+        private async Task<bool> EnsureAppAsync()
+        {
+            try
+            {
+                await CallAsync(HttpMethod.Get, "/api/games");
+                return true;
+            }
+            catch (HttpRequestException)
+            {
+            }
+            ShowStatus("Starting AutoCheatDeck...");
+            if (!await Launcher.LaunchUriAsync(new Uri("autocheatdeck:widget")))
+            {
+                ShowStatus("Couldn't start AutoCheatDeck. Open it once on the desktop so the widget can find it.");
+                return false;
+            }
+            for (int i = 0; i < 30; i++)
+            {
+                await Task.Delay(500);
+                try
+                {
+                    await CallAsync(HttpMethod.Get, "/api/games");
+                    return true;
+                }
+                catch (HttpRequestException)
+                {
+                }
+            }
+            ShowStatus("AutoCheatDeck didn't start. Open it on the desktop, then reopen this widget.");
+            return false;
+        }
+
         private void ShowStatus(string text) => StatusText.Text = text ?? "";
 
         private void ShowError(Exception e)
         {
             ShowStatus(e is HttpRequestException
-                ? "Can't reach AutoCheatDeck. Start it on the desktop (it can stay in the tray), then reopen this widget."
+                ? "Lost the connection to AutoCheatDeck. Reopen the widget to start it again."
                 : e.Message);
         }
+
+        private static string GamePath(GameItem game, string action) =>
+            "/api/games/" + Uri.EscapeDataString(game.Id) + "/" + action;
 
         // ---------- games ----------
 
         private async Task LoadGamesAsync()
         {
             ShowGameList();
+            if (!await EnsureAppAsync())
+            {
+                return;
+            }
             ShowStatus("Loading games...");
             try
             {
@@ -102,12 +149,13 @@ namespace AutoCheatDeckWidget
                 foreach (var value in result.GetNamedArray("games"))
                 {
                     var game = value.GetObject();
+                    var running = game.GetNamedBoolean("running", false);
                     games.Add(new GameItem
                     {
                         Id = game.GetNamedString("id"),
                         Name = game.GetNamedString("name"),
                         Trainer = game.GetNamedString("trainer"),
-                        Detail = game.GetNamedString("source") + (game.GetNamedBoolean("hasCheats") ? " · cheats ready" : ""),
+                        Detail = game.GetNamedString("source") + (running ? " · trainer running" : ""),
                     });
                 }
                 ShowStatus(games.Count == 0 ? "No trainers yet. Find one in AutoCheatDeck on the desktop." : "");
@@ -145,12 +193,41 @@ namespace AutoCheatDeckWidget
 
         // ---------- cheats ----------
 
-        /// <summary>Shows the cached cheats; false if AutoCheatDeck hasn't read them yet.</summary>
+        private static CheatItem ToItem(JsonObject cheat, ref string section)
+        {
+            var notes = new List<string>();
+            var cheatSection = cheat.GetNamedString("section", "");
+            if (cheatSection != section)
+            {
+                section = cheatSection;
+                notes.Add(section);
+            }
+            var kind = cheat.GetNamedString("kind", "");
+            if (kind == "CheatOptionSetComboBox")
+            {
+                notes.Add("pick the option in the trainer window");
+            }
+            else if (kind.StartsWith("CheatOptionSetValue") || kind.StartsWith("CheatOptionWithInput")
+                     || cheat.GetNamedBoolean("adjustable", false))
+            {
+                notes.Add("value set in the trainer window");
+            }
+            var on = cheat.GetNamedValue("on");
+            return new CheatItem
+            {
+                Key = cheat.GetNamedString("key"),
+                Name = cheat.GetNamedString("name"),
+                Note = string.Join(" · ", notes),
+                On = on.ValueType == JsonValueType.Boolean ? on.GetBoolean() : (bool?)null,
+            };
+        }
+
+        /// <summary>Shows the cheats with their live state; false if they haven't been read yet.</summary>
         private async Task<bool> LoadCheatsAsync(GameItem game)
         {
             try
             {
-                var result = await CallAsync(HttpMethod.Get, "/api/games/" + Uri.EscapeDataString(game.Id) + "/cheats");
+                var result = await CallAsync(HttpMethod.Get, GamePath(game, "cheats"));
                 if (game != current)
                 {
                     return true;
@@ -162,28 +239,16 @@ namespace AutoCheatDeckWidget
                 }
                 cheats.Clear();
                 string section = "";
+                bool running = false;
                 foreach (var value in result.GetNamedArray("cheats"))
                 {
-                    var cheat = value.GetObject();
-                    var notes = new List<string>();
-                    var cheatSection = cheat.GetNamedString("section", "");
-                    if (cheatSection != section)
-                    {
-                        section = cheatSection;
-                        notes.Add(section);
-                    }
-                    if (cheat.GetNamedBoolean("adjustable", false))
-                    {
-                        notes.Add("value set in the trainer window");
-                    }
-                    cheats.Add(new CheatItem
-                    {
-                        Key = cheat.GetNamedString("key"),
-                        Name = cheat.GetNamedString("name"),
-                        Note = string.Join(" · ", notes),
-                    });
+                    var item = ToItem(value.GetObject(), ref section);
+                    running |= item.On != null;
+                    cheats.Add(item);
                 }
-                ShowStatus("Select a cheat to toggle it (start the game first).");
+                ShowStatus(running
+                    ? "Select a cheat to switch it on or off."
+                    : "The trainer isn't running. Launch it to switch cheats.");
                 return true;
             }
             catch (Exception e)
@@ -201,26 +266,23 @@ namespace AutoCheatDeckWidget
                 return;
             }
             LaunchButton.IsEnabled = false;
+            ShowStatus("Starting the trainer...");
             try
             {
-                var result = await CallAsync(HttpMethod.Post, "/api/games/" + Uri.EscapeDataString(game.Id) + "/launch");
-                if (!result.GetNamedBoolean("readingCheats", false))
-                {
-                    ShowStatus("Trainer started.");
-                    await LoadCheatsAsync(game);
-                    return;
-                }
-                // AutoCheatDeck reads the new trainer's cheats once its window appears (bounded wait).
-                ShowStatus("Trainer started. Reading its cheats...");
+                var result = await CallAsync(HttpMethod.Post, GamePath(game, "launch"));
+                // The trainer needs a moment before its window (and cheats) can be read.
+                ShowStatus(result.GetNamedBoolean("readingCheats", false)
+                    ? "Trainer started. Reading its cheats..."
+                    : "Trainer started.");
                 for (int i = 0; i < 20 && game == current; i++)
                 {
-                    await Task.Delay(2000);
-                    if (await LoadCheatsAsync(game))
+                    await Task.Delay(1500);
+                    if (await LoadCheatsAsync(game) && HasState())
                     {
                         return;
                     }
                 }
-                ShowStatus("Couldn't read the cheats yet. Try Reload cheats.");
+                ShowStatus("The trainer is taking a while. Try Reload cheats.");
             }
             catch (Exception ex)
             {
@@ -230,6 +292,18 @@ namespace AutoCheatDeckWidget
             {
                 LaunchButton.IsEnabled = true;
             }
+        }
+
+        private bool HasState()
+        {
+            foreach (var item in cheats)
+            {
+                if (item.On != null)
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         private async void Reload_Click(object sender, RoutedEventArgs e)
@@ -243,7 +317,7 @@ namespace AutoCheatDeckWidget
             ShowStatus("Reading the trainer's cheats...");
             try
             {
-                await CallAsync(HttpMethod.Post, "/api/games/" + Uri.EscapeDataString(game.Id) + "/read");
+                await CallAsync(HttpMethod.Post, GamePath(game, "read"));
                 await LoadCheatsAsync(game);
             }
             catch (Exception ex)
@@ -258,12 +332,29 @@ namespace AutoCheatDeckWidget
 
         private async void Cheat_Click(object sender, ItemClickEventArgs e)
         {
+            var game = current;
             var cheat = (CheatItem)e.ClickedItem;
+            if (game == null)
+            {
+                return;
+            }
+            if (cheat.On == null)
+            {
+                ShowStatus("Launch the trainer first.");
+                return;
+            }
             try
             {
-                var body = new JsonObject { ["key"] = JsonValue.CreateStringValue(cheat.Key) };
-                await CallAsync(HttpMethod.Post, "/api/press", body);
-                ShowStatus("Sent " + cheat.Key + ": " + cheat.Name);
+                var body = new JsonObject { ["name"] = JsonValue.CreateStringValue(cheat.Name) };
+                var result = await CallAsync(HttpMethod.Post, GamePath(game, "toggle"), body);
+                var on = result.GetNamedBoolean("on");
+                var index = cheats.IndexOf(cheat);
+                if (index >= 0)
+                {
+                    // Replace the row so the list redraws its ON/OFF text.
+                    cheats[index] = new CheatItem { Key = cheat.Key, Name = cheat.Name, Note = cheat.Note, On = on };
+                }
+                ShowStatus(cheat.Name + (on ? " is on" : " is off"));
             }
             catch (Exception ex)
             {

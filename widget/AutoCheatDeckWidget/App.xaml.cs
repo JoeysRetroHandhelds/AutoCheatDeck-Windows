@@ -83,6 +83,14 @@ namespace AutoCheatDeckWidget
                         widgetArgs,
                         Window.Current.CoreWindow,
                         rootFrame);
+                    // Match Game Bar's theme (its overlay is dark by default; the app's own default
+                    // theme would give black text on it) and follow later changes.
+                    rootFrame.RequestedTheme = widget1.RequestedTheme;
+                    widget1.RequestedThemeChanged += async (sender, themeArgs) =>
+                    {
+                        await rootFrame.Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Normal,
+                            () => rootFrame.RequestedTheme = sender.RequestedTheme);
+                    };
                     rootFrame.Navigate(typeof(CheatWidget));
 
                     Window.Current.Closed += CheatWidgetWindow_Closed;
