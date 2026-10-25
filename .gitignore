@@ -4,3 +4,8 @@ dist/
 *.spec
 build.log
 data/
+widget/**/bin/
+widget/**/obj/
+widget/**/AppPackages/
+widget/**/BundleArtifacts/
+widget/**/*.user
