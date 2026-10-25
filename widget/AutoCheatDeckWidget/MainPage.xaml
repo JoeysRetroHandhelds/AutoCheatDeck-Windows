@@ -1,0 +1,19 @@
+<Page
+    x:Class="AutoCheatDeckWidget.MainPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:local="using:AutoCheatDeckWidget"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    Background="{ThemeResource ApplicationPageBackgroundThemeBrush}"
+    mc:Ignorable="d">
+
+    <StackPanel
+        HorizontalAlignment="Center"
+        VerticalAlignment="Center"
+        Orientation="Vertical">
+        <TextBlock FontSize="20" FontWeight="SemiBold" Text="AutoCheatDeck widget" />
+        <TextBlock MaxWidth="420" Margin="0,8,0,0" TextWrapping="Wrap"
+                   Text="This app runs inside Xbox Game Bar. Press Win+G (or the Xbox button), open the Widgets menu and choose AutoCheatDeck. Keep AutoCheatDeck running on the desktop; the widget talks to it." />
+    </StackPanel>
+</Page>
