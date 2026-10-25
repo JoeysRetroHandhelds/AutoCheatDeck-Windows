@@ -1,8 +1,9 @@
 """Read Xbox-style controllers through XInput (ctypes, no dependencies).
 
-Emits named button presses with key-repeat for directions. The controller is only read while
-one of the app's windows is in the foreground, so a game being played never drives the UI and the
-app costs nothing (no 60 Hz wakeups) while it sits in the background.
+Emits named button presses with key-repeat for directions. XInput has no events, so a controller
+has to be polled; that happens only while the app says one of its windows is focused (or one of
+its dialogs is open). The rest of the time the thread sleeps without a timeout: no wakeups at all,
+and a game being played never drives the UI.
 """
 
 import ctypes
@@ -33,8 +34,6 @@ STICK_DEADZONE = 16000
 REPEAT_DELAY = 0.4
 REPEAT_RATE = 0.11
 POLL = 1 / 60
-# While another app is in front, only check (cheaply) whether we've come back to the front.
-IDLE_POLL = 0.5
 # XInputGetState is slow for empty slots, so look for newly connected controllers only this often.
 RESCAN = 2.0
 
@@ -141,18 +140,48 @@ DIALOG_KEYS = {
 
 
 class Gamepad:
-    """Polls XInput on a thread while the app is in front; `on_press(name)` runs on that thread."""
+    """Polls XInput on a thread while active; `on_press(name)` runs on that thread."""
 
-    def __init__(self, on_press: Callable[[str], None]):
+    def __init__(self, on_press: Callable[[str], None], on_change: Callable[[], None] | None = None):
         self._xinput = _load_xinput()
         self._on_press = on_press
+        self._on_change = on_change
         self._connected: set[int] = set()
         self.connected = False  # any controller seen on the last scan (read from the UI thread)
         self._last_scan = 0.0
+        self._focused = False
+        self._holds = 0
+        self._lock = threading.Lock()
+        self._wanted = threading.Event()  # set while there is a reason to read the controller
         self._stop = threading.Event()
         self.available = self._xinput is not None
         if self.available:
             threading.Thread(target=self._run, name="gamepad", daemon=True).start()
+
+    # The app calls these from the UI thread.
+
+    def set_active(self, focused: bool) -> None:
+        """One of the app's windows gained (True) or lost (False) focus."""
+        with self._lock:
+            self._focused = focused
+            self._update()
+
+    def hold(self) -> None:
+        """Keep reading while a native dialog (which takes focus from our windows) is open."""
+        with self._lock:
+            self._holds += 1
+            self._update()
+
+    def release(self) -> None:
+        with self._lock:
+            self._holds = max(0, self._holds - 1)
+            self._update()
+
+    def _update(self) -> None:
+        if self._focused or self._holds:
+            self._wanted.set()
+        else:
+            self._wanted.clear()
 
     def _held(self, now: float) -> set[str]:
         slots = range(4) if now - self._last_scan >= RESCAN else sorted(self._connected)
@@ -167,52 +196,50 @@ class Gamepad:
                 held |= pressed_names(pad.wButtons, pad.sThumbLX, pad.sThumbLY)
             else:
                 self._connected.discard(index)
-        connected = bool(self._connected)
         if sorted(self._connected) != getattr(self, "_logged_slots", None):
             self._logged_slots = sorted(self._connected)
             log.get().info("controller: connected slots %s", self._logged_slots)
-        self.connected = connected
+            self.connected = bool(self._connected)
+            if self._on_change:
+                self._on_change()
         return held
 
     def _run(self) -> None:
         repeater = Repeater()
-        delay = IDLE_POLL
         logged_presses = 0
-        was_ours = None
-        while not self._stop.wait(delay):
+        while not self._stop.is_set():
+            # Asleep until a window is focused or a dialog opens: no timeout, no wakeups.
+            self._wanted.wait()
+            if self._stop.is_set():
+                break
             try:
-                ours, window_class = foreground_window()
-                if ours != was_ours:
-                    was_ours = ours
-                    log.get().info("controller: app %s (window class %r)",
-                                   "in front" if ours else "in background", window_class)
-                if not ours:
-                    delay = IDLE_POLL
-                    now = time.monotonic()
-                    if now - self._last_scan >= RESCAN * 5:
-                        self._held(now)  # keep the "controller connected" status current, rarely
-                    repeater.update(set(), now)  # forget buttons held when we lost focus
-                    continue
                 now = time.monotonic()
-                held = self._held(now)
-                if delay == IDLE_POLL:
-                    # Just came to the front: a button still held from switching here (e.g. A in the
-                    # Xbox shell) must not also act on the app.
-                    delay = POLL
-                    repeater.update(held, now)
-                    continue
-                for name in repeater.update(held, now):
-                    if logged_presses < 20:
-                        logged_presses += 1
-                        log.get().info("controller: press %s (window class %r)", name, window_class)
-                    if window_class == DIALOG_CLASS:
-                        if name in DIALOG_KEYS:
-                            tap(*DIALOG_KEYS[name])
-                    else:
-                        self._on_press(name)
+                self._last_scan = 0.0  # look for controllers straight away
+                # Buttons already held when we became active (e.g. A pressed to switch here) don't count.
+                repeater.update(set(), now)
+                repeater.update(self._held(now), now)
+                while self._wanted.is_set() and not self._stop.wait(POLL):
+                    now = time.monotonic()
+                    held = self._held(now)
+                    events = repeater.update(held, now)
+                    if not events:
+                        continue
+                    ours, window_class = foreground_window()
+                    if not ours:
+                        continue
+                    for name in events:
+                        if logged_presses < 20:
+                            logged_presses += 1
+                            log.get().info("controller: press %s (window class %r)", name, window_class)
+                        if window_class == DIALOG_CLASS:
+                            if name in DIALOG_KEYS:
+                                tap(*DIALOG_KEYS[name])
+                        else:
+                            self._on_press(name)
             except Exception:  # never let a bad poll kill controller support, but record why
                 log.get().exception("controller: poll failed")
                 time.sleep(1)
 
     def stop(self) -> None:
         self._stop.set()
+        self._wanted.set()  # wake the thread so it can exit
