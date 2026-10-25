@@ -95,9 +95,11 @@ class App:
         self.msg = Dialogs(self.gamepad)
         for key in KEYS:
             root.bind_all("<{}>".format(key), self._on_key)
-        # Read the controller only while one of our windows is focused.
-        root.bind_all("<Activate>", lambda _: self.gamepad.set_active(True))
-        root.bind_all("<Deactivate>", lambda _: self.gamepad.set_active(False))
+        # Read the controller only while one of our windows is focused. (Tk's <Activate> never fires
+        # here; FocusIn/FocusOut do. Focus moving between our own widgets is a FocusOut followed by
+        # a FocusIn, so whether the app lost focus is decided once things settle.)
+        root.bind_all("<FocusIn>", lambda _: self._settle_focus())
+        root.bind_all("<FocusOut>", lambda _: root.after_idle(self._check_focus))
         self._refresh_controller_status()
 
         # A portable folder can move; keep the startup entry pointing at this copy.
@@ -174,6 +176,7 @@ class App:
         self.hidden = hidden
         if hidden:
             self.root.withdraw()
+            self.gamepad.set_active(False)  # withdrawing sends no FocusOut
 
     def hide_to_tray(self) -> None:
         self._set_hidden(True)
@@ -484,6 +487,19 @@ class App:
         self.run_bg(lambda: startup.enable(sys.executable), done, "Setting up Start with Windows...")
 
     # ---------- controller ----------
+
+    def _settle_focus(self) -> None:
+        """Tk can report FocusIn just before Windows finishes bringing the window to the front, so
+        check now and a few times over the next second (then stop: nothing keeps running)."""
+        for delay in (0, 150, 400, 1000):
+            self.root.after(delay, self._check_focus)
+
+    def _check_focus(self) -> None:
+        # Tk's focus_get() keeps naming its last widget after another app takes over, so ask
+        # Windows which process owns the foreground window (one call, only on focus events).
+        from .gamepad import foreground_window
+
+        self.gamepad.set_active(not self.hidden and foreground_window()[0])
 
     def _refresh_controller_status(self) -> None:
         if not self.gamepad.available:
