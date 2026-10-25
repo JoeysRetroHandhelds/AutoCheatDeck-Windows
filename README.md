@@ -1,6 +1,6 @@
 # AutoCheatDeck for Windows
 
-A portable app that finds [FLiNG](https://flingtrainer.com) trainers for your installed Steam games, downloads them, and starts the trainer automatically when the game launches. Windows counterpart of the [AutoCheatDeck](https://github.com/JoeysRetroHandhelds/AutoCheatDeck) Decky plugin.
+A portable app that finds [FLiNG](https://flingtrainer.com) trainers for your installed games (Steam, Xbox / Game Pass, or any game you add), downloads them, and starts the trainer automatically when the game launches. Windows counterpart of the [AutoCheatDeck](https://github.com/JoeysRetroHandhelds/AutoCheatDeck) Decky plugin.
 
 ## Use
 
@@ -9,7 +9,7 @@ A portable app that finds [FLiNG](https://flingtrainer.com) trainers for your in
 3. Start the game. The trainer launches after the delay set at the bottom (default 5 s). Trainers that need admin rights show a UAC prompt.
 4. Closing the window keeps AutoCheatDeck running in the system tray, so trainers still start with your games; quit from the tray icon's menu. Opening AutoCheatDeck again (shortcut, Start menu, Xbox app) or clicking the tray icon shows the window.
 
-Games are listed most recently played first.
+Games are listed most recently played first. The list includes Steam games, Xbox app / Game Pass games (installed in any Xbox games folder, on any drive), and anything you add with **Add game** (pick the game's .exe: DRM-free, GOG, Epic, emulators...). For Xbox and added games, "last played" is when AutoCheatDeck last saw them running.
 
 ### Steam launch option (most reliable)
 
