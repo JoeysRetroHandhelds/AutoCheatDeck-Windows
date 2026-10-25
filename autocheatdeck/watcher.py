@@ -86,8 +86,10 @@ class Watcher:
         while not self._stop.wait(self._interval):
             try:
                 self.tick(time.monotonic())
-            except Exception:  # keep watching even if one poll fails
-                pass
+            except Exception:  # keep watching even if one poll fails, but record why
+                from . import log
+
+                log.get().exception("watcher: poll failed")
 
     def start(self) -> None:
         if self._thread is None:

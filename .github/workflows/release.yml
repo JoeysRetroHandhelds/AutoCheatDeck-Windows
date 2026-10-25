@@ -18,7 +18,7 @@ jobs:
         with:
           python-version: '3.13'
       - name: Install tools
-        run: pip install pyinstaller flake8
+        run: pip install pyinstaller flake8 pystray pillow
       - name: Lint and test
         run: |
           flake8 --max-line-length=120 autocheatdeck main.py tests
