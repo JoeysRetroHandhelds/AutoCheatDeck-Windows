@@ -5,11 +5,16 @@ current user only (no admin rights); every start of the packaged app refreshes i
 points at wherever the portable folder is now.
 """
 
+import os
 import winreg
 
 SCHEME = "autocheatdeck"
 WIDGET_FLAG = "--widget"
 KEY = r"Software\Classes\{}".format(SCHEME)
+# The widget's packaged launcher runs with a private registry and a redirected AppData, so it can't
+# read the link registration. The same command is kept in a file in the user's profile folder,
+# which packaged processes see as-is.
+WIDGET_COMMAND_FILE = os.path.join(os.path.expanduser("~"), ".autocheatdeck", "widget-command.txt")
 
 
 def command_for(exe_path: str) -> str:
@@ -24,6 +29,9 @@ def register(exe_path: str) -> None:
         winreg.SetValueEx(key, "", 0, winreg.REG_SZ, '"{}",0'.format(exe_path))
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, KEY + r"\shell\open\command") as key:
         winreg.SetValueEx(key, "", 0, winreg.REG_SZ, command_for(exe_path))
+    os.makedirs(os.path.dirname(WIDGET_COMMAND_FILE), exist_ok=True)
+    with open(WIDGET_COMMAND_FILE, "w", encoding="utf-8") as f:
+        f.write(command_for(exe_path))
 
 
 def registered_command() -> str | None:

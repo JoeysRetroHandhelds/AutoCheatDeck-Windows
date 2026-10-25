@@ -36,28 +36,78 @@ $writer.AutoFlush = $true
 $auto = [Windows.Automation.AutomationElement]
 $scope = [Windows.Automation.TreeScope]
 
+Add-Type -Namespace Acd -Name Native -MemberDefinition @'
+[DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hWnd, int index);
+[DllImport("user32.dll")] public static extern int SetWindowLong(IntPtr hWnd, int index, int value);
+[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+[DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+[DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hWnd);
+[DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, int flags, IntPtr extra);
+'@
+$GWL_EXSTYLE = -20
+$WS_EX_NOACTIVATE = 0x08000000
+$cache = @{}  # trainer title -> @{ hwnd; rows = list of @{ name; kind; toggle } }
+
 function Find-Trainer($title) {
     $cond = New-Object Windows.Automation.PropertyCondition ($auto::NameProperty), $title
     $win = $auto::RootElement.FindFirst($scope::Children, $cond)
     if (-not $win) { throw "The trainer isn't running" }
     return $win
 }
-function Child-ById($element, $id) {
-    $cond = New-Object Windows.Automation.PropertyCondition ($auto::AutomationIdProperty), $id
-    return $element.FindFirst($scope::Descendants, $cond)
+# Every kind of cheat row (CheatOption, CheatOptionWithInput, CheatOptionSetValue, ...) has an
+# m_toggle_button and an m_label_option_name. Looking them up is slow (a cross-process search per
+# element), so it's done once per trainer window and reused; toggles and state reads then talk to
+# the cached toggle buttons directly.
+function Get-Rows($title, [bool]$refresh) {
+    $entry = $cache[$title]
+    if ($refresh -or -not $entry -or -not [Acd.Native]::IsWindow($entry.hwnd)) {
+        $win = Find-Trainer $title
+        $walker = [Windows.Automation.TreeWalker]::ControlViewWalker
+        $buttonCond = New-Object Windows.Automation.PropertyCondition ($auto::AutomationIdProperty), 'm_toggle_button'
+        $nameCond = New-Object Windows.Automation.PropertyCondition ($auto::AutomationIdProperty), 'm_label_option_name'
+        $rows = New-Object System.Collections.ArrayList
+        foreach ($button in $win.FindAll($scope::Descendants, $buttonCond)) {
+            $row = $walker.GetParent($button)
+            $label = $row.FindFirst($scope::Children, $nameCond)
+            if (-not $label) { continue }
+            $toggle = $button.GetCurrentPattern([Windows.Automation.TogglePattern]::Pattern)
+            [void]$rows.Add(@{ name = $label.Current.Name; kind = $row.Current.ClassName; toggle = $toggle })
+        }
+        $entry = @{ hwnd = [IntPtr]$win.Current.NativeWindowHandle; rows = $rows }
+        $cache[$title] = $entry
+    }
+    return $entry
 }
-function Get-Rows($win) {
-    # Every kind of cheat row (CheatOption, CheatOptionWithInput, CheatOptionSetValue, ...) has an
-    # m_toggle_button; its parent is the row.
-    $walker = [Windows.Automation.TreeWalker]::ControlViewWalker
-    $cond = New-Object Windows.Automation.PropertyCondition ($auto::AutomationIdProperty), 'm_toggle_button'
-    return @(foreach ($button in $win.FindAll($scope::Descendants, $cond)) { $walker.GetParent($button) })
+function Is-On($toggle) { return ($toggle.Current.ToggleState -eq 'On') }
+function Read-States($title, [bool]$refresh) {
+    $entry = Get-Rows $title $refresh
+    return @(foreach ($r in $entry.rows) { @{ name = $r.name; on = (Is-On $r.toggle); kind = $r.kind } })
 }
-function Row-State($row) {
-    $button = Child-ById $row 'm_toggle_button'
-    if (-not $button) { return $null }
-    $toggle = $button.GetCurrentPattern([Windows.Automation.TogglePattern]::Pattern)
-    return @{ button = $toggle; on = ($toggle.Current.ToggleState -eq 'On') }
+function Toggle-Cheat($title, $name, [bool]$refresh) {
+    $entry = Get-Rows $title $refresh
+    $row = $null
+    foreach ($r in $entry.rows) { if ($r.name -eq $name) { $row = $r; break } }
+    if (-not $row) { throw ("No cheat named " + $name) }
+    $before = Is-On $row.toggle
+    # Pressing a WPF button can activate its window, which would close Game Bar's overlay. Make the
+    # trainer window non-activating for the moment of the toggle, and give focus back if it moved.
+    $foreground = [Acd.Native]::GetForegroundWindow()
+    $style = [Acd.Native]::GetWindowLong($entry.hwnd, $GWL_EXSTYLE)
+    [void][Acd.Native]::SetWindowLong($entry.hwnd, $GWL_EXSTYLE, ($style -bor $WS_EX_NOACTIVATE))
+    try {
+        $row.toggle.Toggle()
+        # The trainer applies the change asynchronously: wait (briefly) until the state flips.
+        $deadline = (Get-Date).AddMilliseconds(600)
+        while ((Is-On $row.toggle) -eq $before -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 25 }
+    } finally {
+        [void][Acd.Native]::SetWindowLong($entry.hwnd, $GWL_EXSTYLE, $style)
+    }
+    if ([Acd.Native]::GetForegroundWindow() -ne $foreground) {
+        [Acd.Native]::keybd_event(0x12, 0, 0, [IntPtr]::Zero)  # Alt tap: lets us set the foreground
+        [Acd.Native]::keybd_event(0x12, 0, 2, [IntPtr]::Zero)
+        [void][Acd.Native]::SetForegroundWindow($foreground)
+    }
+    return (Is-On $row.toggle)
 }
 
 while ($true) {
@@ -81,29 +131,16 @@ while ($true) {
                 $res = @{ ok = $true; lines = $lines }
             }
             'states' {
-                $win = Find-Trainer $req.title
-                $states = @(foreach ($row in (Get-Rows $win)) {
-                    $name = Child-ById $row 'm_label_option_name'
-                    $state = Row-State $row
-                    if ($name -and $state) {
-                        @{ name = $name.Current.Name; on = $state.on; kind = $row.Current.ClassName }
-                    }
-                })
+                # A trainer restart or a stale element: rebuild the cache once and retry.
+                try { $states = Read-States $req.title $false } catch { $states = Read-States $req.title $true }
                 $res = @{ ok = $true; states = $states }
             }
             'toggle' {
-                $win = Find-Trainer $req.title
-                $found = $null
-                foreach ($row in (Get-Rows $win)) {
-                    $name = Child-ById $row 'm_label_option_name'
-                    if ($name -and $name.Current.Name -eq $req.name) { $found = $row; break }
+                try { $on = Toggle-Cheat $req.title $req.name $false }
+                catch [Windows.Automation.ElementNotAvailableException] {
+                    $on = Toggle-Cheat $req.title $req.name $true
                 }
-                if (-not $found) { throw ("No cheat named " + $req.name) }
-                $state = Row-State $found
-                if (-not $state) { throw ($req.name + " has no on/off switch") }
-                $state.button.Toggle()
-                Start-Sleep -Milliseconds 150
-                $res = @{ ok = $true; on = ((Row-State $found).on) }
+                $res = @{ ok = $true; on = $on }
             }
             'quit' { $writer.WriteLine('{"ok":true}'); exit 0 }
             default { throw ("Unknown command " + $req.cmd) }

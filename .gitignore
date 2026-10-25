@@ -9,3 +9,4 @@ widget/**/obj/
 widget/**/AppPackages/
 widget/**/BundleArtifacts/
 widget/**/*.user
+widget/**/Launcher/*.exe
