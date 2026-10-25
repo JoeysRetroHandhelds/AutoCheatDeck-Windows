@@ -5,52 +5,6 @@ import unittest
 from unittest import mock
 
 from autocheatdeck import fling, gamepad, steam
-from autocheatdeck.watcher import Watcher
-
-GAME = r"C:\Games\Hades"
-GAME_EXE = r"C:\Games\Hades\Hades.exe"
-
-
-def make_watcher(procs, launched, targets=None, changes=None):
-    return Watcher(
-        targets=lambda: {"1": (GAME, r"C:\t.exe")} if targets is None else targets(),
-        list_processes=lambda: procs,
-        launch=lambda appid, path: launched.append(appid),
-        delay=lambda: 0,
-        on_change=None if changes is None else changes.append,
-    )
-
-
-class WatcherPrimingTest(unittest.TestCase):
-    def test_game_already_running_at_start_gets_no_second_trainer(self):
-        launched: list[str] = []
-        w = make_watcher([GAME_EXE], launched)
-        w.tick(0)
-        w.tick(10)
-        self.assertEqual(launched, [])
-
-    def test_priming_waits_for_the_game_list(self):
-        launched: list[str] = []
-        loaded = {"ready": False}
-        w = make_watcher([GAME_EXE], launched,
-                         targets=lambda: {"1": (GAME, r"C:\t.exe")} if loaded["ready"] else {})
-        w.tick(0)  # list not loaded yet: must not prime with "nothing running"
-        loaded["ready"] = True
-        w.tick(1)
-        w.tick(2)
-        self.assertEqual(launched, [])
-
-    def test_reports_running_games(self):
-        procs: list[str] = []
-        changes: list[set] = []
-        w = make_watcher(procs, [], changes=changes)
-        w.tick(0)
-        procs.append(GAME_EXE)
-        w.tick(1)
-        procs.clear()
-        w.tick(2)
-        self.assertEqual(changes, [{"1"}, set()])
-        self.assertEqual(w.running, set())
 
 
 class VdfEscapeTest(unittest.TestCase):
@@ -106,6 +60,34 @@ class SafeReplaceTest(unittest.TestCase):
             self.download(b"<html>not a trainer</html>")
         self.assertEqual(os.listdir(self.target), ["Old Trainer.exe"])
         self.assertEqual(sorted(os.listdir(os.path.dirname(self.target))), ["1"])
+
+
+class GamepadFocusTest(unittest.TestCase):
+    def make(self):
+        with mock.patch.object(gamepad, "_load_xinput", return_value=None):  # no polling thread
+            return gamepad.Gamepad(on_press=lambda name: None)
+
+    def test_only_wanted_while_focused_or_a_dialog_is_open(self):
+        pad = self.make()
+        self.assertFalse(pad._wanted.is_set())
+        pad.set_active(True)
+        self.assertTrue(pad._wanted.is_set())
+        pad.set_active(False)
+        self.assertFalse(pad._wanted.is_set())
+
+    def test_dialog_keeps_it_on_after_the_window_loses_focus(self):
+        pad = self.make()
+        pad.set_active(True)
+        pad.hold()
+        pad.set_active(False)  # the native dialog took focus
+        self.assertTrue(pad._wanted.is_set())
+        pad.release()
+        self.assertFalse(pad._wanted.is_set())
+
+    def test_stop_wakes_the_sleeping_thread(self):
+        pad = self.make()
+        pad.stop()
+        self.assertTrue(pad._wanted.is_set() and pad._stop.is_set())
 
 
 class GamepadTest(unittest.TestCase):

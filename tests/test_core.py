@@ -8,7 +8,6 @@ import zipfile
 from unittest import mock
 
 from autocheatdeck import fling, steam, updater
-from autocheatdeck.watcher import Watcher, running_games
 
 FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures")
 
@@ -51,48 +50,6 @@ class SteamTest(unittest.TestCase):
             games = steam.installed_games(steam_dir)
         # Most recently played first, then never-played games alphabetically.
         self.assertEqual([g.name for g in games], ["ELDEN RING", "Hades", "Balatro", "Portal 2"])
-
-
-class WatcherTest(unittest.TestCase):
-    def test_running_games_matches_install_folder_and_ignores_trainer(self):
-        dirs = {"1": r"C:\Games\Hades", "2": r"C:\Games\Hades II"}
-        exes = [r"c:\games\hades\x64\Hades.exe", r"C:\Games\Hades II\trainer.exe"]
-        self.assertEqual(running_games(dirs, exes, ignore={r"C:\Games\Hades II\trainer.exe"}), {"1"})
-
-    def test_launches_once_after_delay_and_rearms_when_game_exits(self):
-        procs: list[str] = []
-        launched: list[str] = []
-        w = Watcher(
-            targets=lambda: {"1": (r"C:\Games\Hades", r"C:\trainers\1\t.exe")},
-            list_processes=lambda: procs,
-            launch=lambda appid, path: launched.append(appid),
-            delay=lambda: 5,
-        )
-        w.tick(0)
-        procs.append(r"C:\Games\Hades\Hades.exe")
-        w.tick(10)
-        w.tick(14)
-        self.assertEqual(launched, [])
-        w.tick(15)
-        w.tick(30)
-        self.assertEqual(launched, ["1"])
-        procs.clear()
-        w.tick(40)
-        procs.append(r"C:\Games\Hades\Hades.exe")
-        w.tick(50)
-        w.tick(55)
-        self.assertEqual(launched, ["1", "1"])
-
-    def test_game_closing_before_delay_cancels_launch(self):
-        procs = [r"C:\Games\Hades\Hades.exe"]
-        launched: list[str] = []
-        w = Watcher(lambda: {"1": (r"C:\Games\Hades", r"C:\t.exe")}, lambda: procs,
-                    lambda a, p: launched.append(a), lambda: 5)
-        w.tick(0)
-        procs.clear()
-        w.tick(3)
-        w.tick(10)
-        self.assertEqual(launched, [])
 
 
 class LaunchTest(unittest.TestCase):
