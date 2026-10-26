@@ -154,11 +154,9 @@ while ($true) {
                     Start-Sleep -Milliseconds 25
                     $hwnd = [Acd.Native]::FindWindow([NullString]::Value, $req.title)
                 }
-                if ($hwnd -ne [IntPtr]::Zero) {
-                    Hide-Trainer $hwnd
-                    # WPF may show the window a moment after creating it: keep hiding it for a bit.
-                    for ($i = 0; $i -lt 20; $i++) { Start-Sleep -Milliseconds 50; Hide-Trainer $hwnd }
-                }
+                # Hide it as soon as it exists; if it shows itself or takes focus later, the overlay's
+                # focus guard takes focus back and toggles hide it again.
+                if ($hwnd -ne [IntPtr]::Zero) { Hide-Trainer $hwnd }
                 $res = @{ ok = $true; hidden = ($hwnd -ne [IntPtr]::Zero) }
             }
             'show-trainer' {

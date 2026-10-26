@@ -318,13 +318,17 @@ namespace AutoCheatDeckWidget
             try
             {
                 var result = await CallAsync(HttpMethod.Post, GamePath(game, "launch"));
-                // The trainer needs a moment before its window (and cheats) can be read.
-                ShowStatus(result.GetNamedBoolean("readingCheats", false)
-                    ? "Trainer started. Reading its cheats..."
-                    : "Trainer started.");
-                for (int i = 0; i < 20 && game == current; i++)
+                if (!result.GetNamedBoolean("readingCheats", false))
                 {
-                    await Task.Delay(1500);
+                    // Cheats already known: the overlay reads their state itself.
+                    await OpenOverlayAsync(game);
+                    return;
+                }
+                // First launch: the trainer needs a moment before its cheats can be read.
+                ShowStatus("Trainer started. Reading its cheats...");
+                for (int i = 0; i < 100 && game == current; i++)
+                {
+                    await Task.Delay(300);
                     if (await LoadCheatsAsync(game) && HasState())
                     {
                         await OpenOverlayAsync(game);

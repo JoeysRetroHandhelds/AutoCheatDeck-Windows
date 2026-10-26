@@ -486,6 +486,9 @@ class App(api.Backend):
 
     def api_games(self) -> list[dict]:
         self._games_ready.wait(15)  # a just-started app is still reading the game library
+        if not self.helper.running:
+            # The widget is open: start the admin helper now, so Launch doesn't wait for it.
+            threading.Thread(target=self._warm_helper, name="helper-start", daemon=True).start()
         result = []
         for game in self.games:
             entry = self.cfg.game(game.appid)
@@ -494,6 +497,12 @@ class App(api.Backend):
                                "trainer": entry["title"], "hasCheats": self.cached_cheats(game.appid) is not None,
                                "running": bool(cheats.trainer_window(entry["path"]))})
         return result
+
+    def _warm_helper(self) -> None:
+        try:
+            self.helper.request("ping")
+        except Exception:  # Launch tries again (and reports the error)
+            log.get().exception("helper: early start failed")
 
     def api_cheats(self, appid: str) -> list[dict] | None:
         """Cached cheats, with live on/off state when the trainer is running."""
