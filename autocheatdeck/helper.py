@@ -11,6 +11,8 @@ signed-in user, one JSON line per request. It blocks on the pipe between request
 exits as soon as the app closes its end, so it never outlives the app.
 """
 
+import base64
+import gzip
 import json
 import os
 import secrets
@@ -232,6 +234,22 @@ while ($true) {
 }
 """
 
+# The helper script travels inline (never via a file the user could swap), but encoded as UTF-16
+# base64 it would exceed Windows' 32,767-character command line. So the command line carries this
+# small loader plus the gzip-compressed script, which the loader unpacks and runs.
+LOADER = r"""
+$packed = [Convert]::FromBase64String($Packed)
+$mode = [IO.Compression.CompressionMode]::Decompress
+$stream = New-Object IO.Compression.GZipStream (New-Object IO.MemoryStream (,$packed)), $mode
+$code = (New-Object IO.StreamReader $stream).ReadToEnd()
+. ([ScriptBlock]::Create($code))
+"""
+
+
+def packed_script() -> str:
+    return base64.b64encode(gzip.compress(HELPER_SCRIPT.encode("utf-8"))).decode("ascii")
+
+
 # Starts the helper elevated and returns once the UAC prompt has been answered (not when it exits).
 LAUNCH_OUTER = ("try {{ Start-Process powershell.exe -Verb RunAs -WindowStyle Hidden -ArgumentList "
                 "'-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -EncodedCommand {}'; "
@@ -261,7 +279,8 @@ class Helper:
 
     def _start(self) -> None:
         name = "AutoCheatDeck-" + secrets.token_hex(8)
-        encoded = elevate.encoded_script(HELPER_SCRIPT, PipeName=name, UserSid=current_user_sid())
+        encoded = elevate.encoded_script(LOADER, Packed=packed_script(), PipeName=name,
+                                         UserSid=current_user_sid())
         result = subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
                                  LAUNCH_OUTER.format(encoded)],
                                 capture_output=True, creationflags=elevate.NO_WINDOW, timeout=300, check=False)
