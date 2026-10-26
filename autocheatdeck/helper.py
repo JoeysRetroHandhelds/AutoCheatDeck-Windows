@@ -173,6 +173,10 @@ while ($true) {
                 $cmdLine = '"' + $req.path + '"'
                 # [NullString]::Value: PowerShell would pass $null as an empty string.
                 $none = [IntPtr]::Zero
+                # Block foreground changes while the trainer starts, so its window can't take focus from
+                # Game Bar; released once the window has been minimized (or after the wait).
+                $launchLocked = [Acd.Native]::LockSetForegroundWindow(1)   # LSFW_LOCK
+                try {
                 if (-not [Acd.Native]::CreateProcess([NullString]::Value, $cmdLine, $none, $none, $false, 0,
                         $none, (Split-Path $req.path), [ref]$si, [ref]$pi)) {
                     $err = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
@@ -190,7 +194,10 @@ while ($true) {
                 }
                 if ($hwnd -ne [IntPtr]::Zero) {
                     Start-Sleep -Milliseconds 300   # let it finish showing before minimizing
-                    [void][Acd.Native]::ShowWindow($hwnd, 6)   # SW_MINIMIZE: activates the next window
+                    [void][Acd.Native]::ShowWindow($hwnd, 7)   # SW_SHOWMINNOACTIVE: leave focus where it is
+                }
+                } finally {
+                    if ($launchLocked) { [void][Acd.Native]::LockSetForegroundWindow(2) }   # LSFW_UNLOCK
                 }
                 $res = @{ ok = $true; minimized = ($hwnd -ne [IntPtr]::Zero) }
             }
