@@ -293,7 +293,11 @@ class App(api.Backend):
                         if games else "No games found. Use Add game to add one by hand.")
         self._fill_list()
         if first_load:
-            self.tree.focus_set()  # start on the list so a controller works straight away
+            # Start on the list so a controller works straight away, but only when the window is
+            # showing: asking for focus while hidden (tray / widget start) still activates the app,
+            # which closes Game Bar's overlay. show_window() focuses the list when it appears.
+            if not self.hidden:
+                self.tree.focus_set()
 
     def _fill_list(self) -> None:
         # A game that was just added by hand gets selected once it appears.
