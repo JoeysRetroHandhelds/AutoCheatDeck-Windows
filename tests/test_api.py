@@ -21,6 +21,10 @@ class FakeBackend(api.Backend):
         self.launched.append(appid)
         return {"started": True, "readingCheats": False}
 
+    def api_overlay(self, appid):
+        self.launched.append("overlay " + appid)
+        return {"open": True}
+
     def api_read(self, appid):
         return {"cheats": []}
 
@@ -63,6 +67,10 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(self.request("POST", "/api/games/1/toggle", {"name": "Banana"})[0], 400)
         self.assertEqual(self.backend.toggled, ["Infinite HP"])
         self.assertEqual(self.request("POST", "/api/press", {"key": "Num 1"})[0], 404)  # gone: trainers ignore it
+
+    def test_overlay(self):
+        self.assertEqual(self.request("POST", "/api/games/1/overlay"), (200, {"open": True}))
+        self.assertEqual(self.backend.launched, ["overlay 1"])
 
     def test_every_request_counts_as_activity(self):
         self.request("GET", "/api/games")

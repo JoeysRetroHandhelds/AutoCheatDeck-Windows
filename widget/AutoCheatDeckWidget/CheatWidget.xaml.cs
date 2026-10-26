@@ -295,7 +295,7 @@ namespace AutoCheatDeckWidget
                     cheats.Add(item);
                 }
                 ShowStatus(running
-                    ? "Select a cheat to switch it on or off."
+                    ? "Select a cheat (or Show cheats) to open the cheat overlay."
                     : "The trainer isn't running. Launch it to switch cheats.");
                 return true;
             }
@@ -327,6 +327,7 @@ namespace AutoCheatDeckWidget
                     await Task.Delay(1500);
                     if (await LoadCheatsAsync(game) && HasState())
                     {
+                        await OpenOverlayAsync(game);
                         return;
                     }
                 }
@@ -378,6 +379,8 @@ namespace AutoCheatDeckWidget
             }
         }
 
+        // Cheats are switched in AutoCheatDeck's overlay: the trainer takes focus while switching a
+        // cheat, which closes Game Bar, so tapping one here opens the overlay instead.
         private async void Cheat_Click(object sender, ItemClickEventArgs e)
         {
             var game = current;
@@ -391,18 +394,23 @@ namespace AutoCheatDeckWidget
                 ShowStatus("Launch the trainer first.");
                 return;
             }
+            await OpenOverlayAsync(game);
+        }
+
+        private async void Overlay_Click(object sender, RoutedEventArgs e)
+        {
+            if (current != null)
+            {
+                await OpenOverlayAsync(current);
+            }
+        }
+
+        private async Task OpenOverlayAsync(GameItem game)
+        {
             try
             {
-                var body = new JsonObject { ["name"] = JsonValue.CreateStringValue(cheat.Name) };
-                var result = await CallAsync(HttpMethod.Post, GamePath(game, "toggle"), body);
-                var on = result.GetNamedBoolean("on");
-                var index = cheats.IndexOf(cheat);
-                if (index >= 0)
-                {
-                    // Replace the row so the list redraws its ON/OFF text.
-                    cheats[index] = new CheatItem { Key = cheat.Key, Name = cheat.Name, Note = cheat.Note, On = on };
-                }
-                ShowStatus(cheat.Name + (on ? " is on" : " is off"));
+                await CallAsync(HttpMethod.Post, GamePath(game, "overlay"));
+                ShowStatus("Cheats are open over the game. B or Esc closes them.");
             }
             catch (Exception ex)
             {
