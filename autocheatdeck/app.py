@@ -101,6 +101,9 @@ class App(api.Backend):
         self.gamepad = Gamepad(on_press=lambda name: self.post(lambda: self.on_pad(name)),
                                on_change=lambda: self.post(self._refresh_controller_status))
         self.msg = Dialogs(self.gamepad)
+        from .overlay import Overlay
+
+        self.overlay = Overlay(self)
         for key in KEYS:
             root.bind_all("<{}>".format(key), self._on_key)
         # Read the controller only while one of our windows is focused. (Tk's <Activate> never fires
@@ -473,7 +476,7 @@ class App(api.Backend):
 
     def _idle_expired(self) -> None:
         self._idle_job = None
-        if self.idle_quit and self.hidden:
+        if self.idle_quit and self.hidden and not self.overlay.visible:
             log.get().info("widget mode: no requests for %ss, quitting", self.idle_quit)
             self.quit()
 
@@ -523,6 +526,11 @@ class App(api.Backend):
 
             threading.Thread(target=work, name="read-cheats", daemon=True).start()
         return {"started": True, "readingCheats": reading}
+
+    def api_overlay(self, appid: str) -> dict:
+        self._trainer(appid)  # errors (no trainer) go back to the widget
+        self.post(lambda: self.overlay.open(appid))
+        return {"open": True}
 
     def api_read(self, appid: str) -> dict:
         return {"cheats": self.read_cheats(appid)["cheats"]}
@@ -649,7 +657,7 @@ class App(api.Backend):
         # Windows which process owns the foreground window (one call, only on focus events).
         from .gamepad import foreground_window
 
-        self.gamepad.set_active(not self.hidden and foreground_window()[0])
+        self.gamepad.set_active((not self.hidden or self.overlay.visible) and foreground_window()[0])
 
     def _refresh_controller_status(self) -> None:
         if not self.gamepad.available:
@@ -683,6 +691,9 @@ class App(api.Backend):
         return found
 
     def on_pad(self, name: str) -> None:
+        if self.overlay.visible:
+            self.overlay.on_pad(name)
+            return
         widget = self.root.focus_get()
         top = widget.winfo_toplevel() if widget else self.root
         if isinstance(top, TrainerFinder):

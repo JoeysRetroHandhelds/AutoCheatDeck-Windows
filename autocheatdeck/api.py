@@ -9,6 +9,7 @@ so the API costs nothing while unused.
   GET  /api/games/<id>/cheats        cheats with live on/off state ({"cheats": [...]} or {"cheats": null})
   POST /api/games/<id>/launch        start the trainer (reads its cheats if not cached yet)
   POST /api/games/<id>/read          (re)read the running trainer's cheats
+  POST /api/games/<id>/overlay       open AutoCheatDeck's cheat overlay over the game
   POST /api/games/<id>/toggle        {"name": "Infinite HP"} switch a cheat; returns {"on": bool}
 
 Launching, reading and toggling go through the admin helper (one UAC prompt per session).
@@ -25,7 +26,7 @@ from . import log
 
 PORT = 47120
 HEADER = "X-AutoCheatDeck"
-_GAME = re.compile(r"^/api/games/([A-Za-z0-9._-]+)/(cheats|launch|read|toggle)$")
+_GAME = re.compile(r"^/api/games/([A-Za-z0-9._-]+)/(cheats|launch|read|toggle|overlay)$")
 
 
 class Backend:
@@ -38,6 +39,9 @@ class Backend:
         raise NotImplementedError
 
     def api_launch(self, appid: str) -> dict:
+        raise NotImplementedError
+
+    def api_overlay(self, appid: str) -> dict:
         raise NotImplementedError
 
     def api_read(self, appid: str) -> dict:
@@ -105,6 +109,8 @@ def _handler(backend: Backend) -> type:
                     return self._reply(200, backend.api_launch(match.group(1)))
                 if match and match.group(2) == "read":
                     return self._reply(200, backend.api_read(match.group(1)))
+                if match and match.group(2) == "overlay":
+                    return self._reply(200, backend.api_overlay(match.group(1)))
                 if match and match.group(2) == "toggle":
                     return self._reply(200, backend.api_toggle(match.group(1), str(self._body().get("name", ""))))
                 self._reply(404, {"error": "not found"})
