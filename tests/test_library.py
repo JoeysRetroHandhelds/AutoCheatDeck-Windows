@@ -46,6 +46,7 @@ class XboxTest(unittest.TestCase):
         self.assertEqual([(g.name, g.source) for g in games], [("Replaced", "Xbox")])
         self.assertTrue(games[0].install_dir.endswith(os.path.join("Replaced", "Content")))
         self.assertEqual(games[0].appid, "xbox-Replaced")
+        self.assertEqual(games[0].build, "1.0.0.0")  # the package version, for "game updated"
 
     def test_localized_name_falls_back_to_folder(self):
         self.write_marker("XboxGames")
@@ -85,6 +86,19 @@ class ManualAndMergeTest(unittest.TestCase):
                 mock.patch.object(library, "xbox_games", return_value=xbox):
             games = library.all_games([], {"xbox-A": 500})
         self.assertEqual([g.name for g in games], ["Xbox Game", "Steam Old", "Steam Never"])
+
+    def test_game_updated_compares_the_recorded_version(self):
+        game = Game("1", "Hades", "d", build="200")
+        self.assertFalse(library.game_updated({"gameBuild": "200"}, game))
+        self.assertTrue(library.game_updated({"gameBuild": "100"}, game))
+        self.assertFalse(library.game_updated({}, game))  # nothing recorded yet
+        self.assertFalse(library.game_updated(None, game))
+        self.assertFalse(library.game_updated({"gameBuild": "100"}, Game("1", "Hades", "d")))  # version unknown
+
+    def test_recorded_play_time_keeps_the_version(self):
+        with mock.patch.object(library.steam, "installed_games", return_value=[Game("1", "S", "s", 1, build="7")]), \
+                mock.patch.object(library, "xbox_games", return_value=[]):
+            self.assertEqual(library.all_games([], {"1": 99})[0].build, "7")
 
     def test_one_failing_store_does_not_hide_the_rest(self):
         with mock.patch.object(library.steam, "installed_games", side_effect=OSError("boom")), \

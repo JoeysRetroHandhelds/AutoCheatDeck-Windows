@@ -251,7 +251,7 @@ class App(api.Backend):
         self.tree.heading("trainer", text="Trainer")
         self.tree.column("#0", width=self.px(300))
         self.tree.column("store", width=self.px(80), anchor="center", stretch=False)
-        self.tree.column("trainer", width=self.px(90), anchor="center", stretch=False)
+        self.tree.column("trainer", width=self.px(130), anchor="center", stretch=False)
         scroll = ttk.Scrollbar(left, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=scroll.set)
         self.tree.pack(side="left", fill="both", expand=True)
@@ -296,6 +296,15 @@ class App(api.Backend):
         self.games = games
         self.by_id = {g.appid: g for g in games}
         self._games_ready.set()
+        # Trainers installed before game versions were recorded: take the current version as theirs.
+        changed = False
+        for game in games:
+            entry = self.cfg.game(game.appid)
+            if entry and game.build and not entry.get("gameBuild"):
+                entry["gameBuild"] = game.build
+                changed = True
+        if changed:
+            self.cfg.save()
         self.set_status("{} games found, most recently played first".format(len(games))
                         if games else "No games found. Use Add game to add one by hand.")
         self._fill_list()
@@ -316,7 +325,9 @@ class App(api.Backend):
             if needle and needle not in game.name.lower():
                 continue
             entry = self.cfg.game(game.appid)
-            mark = "Ready" if entry and os.path.isfile(entry.get("path", "")) else ""
+            mark = ""
+            if entry and os.path.isfile(entry.get("path", "")):
+                mark = "Game updated" if library.game_updated(entry, game) else "Ready"
             self.tree.insert("", "end", iid=game.appid, text=game.name, values=(game.source, mark))
         if not (selected and self.tree.exists(selected)):
             children = self.tree.get_children()
@@ -354,6 +365,11 @@ class App(api.Backend):
         has_trainer = bool(entry and os.path.isfile(entry.get("path", "")))
         if has_trainer:
             ttk.Label(self.detail, text=entry["title"], wraplength=self.px(360)).pack(anchor="w", pady=(16, 8))
+            if library.game_updated(entry, game):
+                ttk.Label(self.detail, foreground="#b35900", wraplength=self.px(360),
+                          text="The game was updated since this trainer was installed. Trainers are made for "
+                               "specific game versions: if cheats stop working, check for a trainer update.").pack(
+                    anchor="w", pady=(0, 8))
             buttons = [
                 ("Launch trainer", lambda: self._launch_now(game.appid, entry["path"])),
                 ("Check for trainer update", lambda: self.check_trainer_update(game.appid)),
@@ -503,7 +519,8 @@ class App(api.Backend):
             if entry and os.path.isfile(entry.get("path", "")):
                 result.append({"id": game.appid, "name": game.name, "source": game.source,
                                "trainer": entry["title"], "hasCheats": self.cached_cheats(game.appid) is not None,
-                               "running": bool(cheats.trainer_window(entry["path"]))})
+                               "running": bool(cheats.trainer_window(entry["path"])),
+                               "gameUpdated": library.game_updated(entry, game)})
         return result
 
     def _warm_helper(self) -> None:
@@ -595,6 +612,7 @@ class App(api.Backend):
                 "pageUrl": page["url"],
                 "path": result["path"],
                 "sha256": result["sha256"],
+                "gameBuild": game.build,  # the game version this trainer was installed for
             })
             self.set_status("Installed {}".format(version["title"]))
             self._fill_list()
@@ -625,6 +643,10 @@ class App(api.Backend):
             self.set_status("")
             latest = detail["versions"][0] if detail["versions"] else None
             if not latest or latest["title"] == entry["title"]:
+                # Nothing newer: accept this game version for the current trainer (clears the warning).
+                if library.game_updated(entry, game):
+                    self.cfg.set_game(appid, dict(entry, gameBuild=game.build))
+                    self._fill_list()
                 self.msg.showinfo("AutoCheatDeck", "Trainer is up to date.", parent=self.root)
             elif self.msg.askyesno("AutoCheatDeck", "Newer trainer available:\n\n{}\n\nDownload it?".format(
                     latest["title"]), parent=self.root):

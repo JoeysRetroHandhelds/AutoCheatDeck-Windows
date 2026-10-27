@@ -4,6 +4,7 @@ Every game gets an id that is safe as a folder name. Steam keeps its plain app i
 settings and trainers carry over; the others are prefixed with their store.
 """
 
+import dataclasses
 import hashlib
 import ntpath
 import os
@@ -49,17 +50,22 @@ def gaming_roots(drive_roots: list[str] | None = None) -> list[str]:
     return roots
 
 
-def _xbox_display_name(config_path: str, fallback: str) -> str:
+def _xbox_info(config_path: str, fallback: str) -> tuple[str, str]:
+    """(display name, package version) from MicrosoftGame.config."""
     try:
         tree = ET.parse(config_path)
     except (OSError, ET.ParseError):
-        return fallback
+        return fallback, ""
+    name, version = fallback, ""
     for element in tree.iter():
-        if element.tag.split("}")[-1] == "ShellVisuals":
-            name = element.get("DefaultDisplayName", "")
-            if name and not name.startswith("ms-resource:"):
-                return name
-    return fallback
+        tag = element.tag.split("}")[-1]
+        if tag == "ShellVisuals":
+            shown = element.get("DefaultDisplayName", "")
+            if shown and not shown.startswith("ms-resource:"):
+                name = shown
+        elif tag == "Identity":
+            version = element.get("Version", "")
+    return name, version
 
 
 def xbox_games(drive_roots: list[str] | None = None) -> list[Game]:
@@ -69,8 +75,8 @@ def xbox_games(drive_roots: list[str] | None = None) -> list[Game]:
             content = os.path.join(root, folder, "Content")
             config = os.path.join(content, "MicrosoftGame.config")
             if os.path.isfile(config):
-                games.append(Game(_safe_id("xbox", folder), _xbox_display_name(config, folder), content,
-                                  source="Xbox"))
+                name, version = _xbox_info(config, folder)
+                games.append(Game(_safe_id("xbox", folder), name, content, source="Xbox", build=version))
     return games
 
 
@@ -84,6 +90,15 @@ def manual_id(folder: str) -> str:
 
 def manual_games(entries: list[dict]) -> list[Game]:
     return [Game(e["id"], e["name"], e["dir"], source="Manual") for e in entries if os.path.isdir(e.get("dir", ""))]
+
+
+# ---------- game updates ----------
+
+def game_updated(entry: dict | None, game: Game) -> bool:
+    """True when the game's version changed since its trainer was installed (or last confirmed):
+    FLiNG trainers are made for specific game versions, so an update often breaks them."""
+    recorded = (entry or {}).get("gameBuild")
+    return bool(recorded and game.build and recorded != game.build)
 
 
 # ---------- everything ----------
@@ -110,6 +125,6 @@ def all_games(manual: list[dict], last_played: dict[str, int]) -> list[Game]:
     for game in games.values():
         seen = last_played.get(game.appid, 0)
         if seen > game.last_played:
-            game = Game(game.appid, game.name, game.install_dir, seen, game.source)
+            game = dataclasses.replace(game, last_played=seen)
         result.append(game)
     return sorted(result, key=lambda g: (-g.last_played, g.name.lower()))

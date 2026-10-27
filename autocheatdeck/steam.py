@@ -20,6 +20,7 @@ class Game:
     install_dir: str
     last_played: int = 0
     source: str = "Steam"
+    build: str = ""  # the installed game's version (Steam build id, Xbox package version); "" if unknown
 
 
 def parse_vdf(text: str) -> dict:
@@ -105,6 +106,6 @@ def installed_games(steam_path: str | None = None) -> list[Game]:
                     last_played = int(state.get("LastPlayed", 0))
                 except ValueError:
                     last_played = 0
-                games[appid] = Game(appid, title, install_dir, last_played)
+                games[appid] = Game(appid, title, install_dir, last_played, build=state.get("buildid", ""))
     # Most recently played first; never-played games after, alphabetically.
     return sorted(games.values(), key=lambda g: (-g.last_played, g.name.lower()))
