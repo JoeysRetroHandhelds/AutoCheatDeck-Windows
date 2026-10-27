@@ -52,13 +52,21 @@ def is_newer(latest: str, current: str) -> bool:
     return parse_version(latest) > parse_version(current)
 
 
-def _open(url: str):
-    if urllib.parse.urlparse(url).hostname not in ALLOWED_HOSTS:
+def _check_url(url: str) -> None:
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme != "https" or parsed.hostname not in ALLOWED_HOSTS:
         raise ValueError("URL not allowed: {}".format(url))
+
+
+def _open(url: str):
+    _check_url(url)
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     response = urllib.request.urlopen(request, timeout=30, context=tls.create_context())
-    if urllib.parse.urlparse(response.geturl()).hostname not in ALLOWED_HOSTS:
-        raise ValueError("Redirected to disallowed host")
+    try:
+        _check_url(response.geturl())
+    except ValueError:
+        response.close()
+        raise
     return response
 
 
@@ -161,7 +169,10 @@ def stage_update(app_dir: str, release: dict | None = None) -> str:
     staging = staging_dir(app_dir)
     try:
         with _open(sha_url) as response:
-            expected = response.read().decode().split()[0].lower()
+            words = response.read().decode(errors="replace").split()
+        if not words:
+            raise ValueError("Release checksum file is empty")
+        expected = words[0].lower()
         actual = _download(zip_url, zip_path)
         if actual != expected:
             raise ValueError("Checksum mismatch: expected {}, got {}".format(expected, actual))

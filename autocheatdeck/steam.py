@@ -62,7 +62,7 @@ def library_folders(steam_path: str) -> list[str]:
     folders = [steam_path]
     vdf = os.path.join(steam_path, "steamapps", "libraryfolders.vdf")
     try:
-        with open(vdf, encoding="utf-8") as f:
+        with open(vdf, encoding="utf-8", errors="replace") as f:
             data = parse_vdf(f.read())
     except OSError:
         return folders
@@ -92,7 +92,7 @@ def installed_games(steam_path: str | None = None) -> list[Game]:
             if not (name.startswith("appmanifest_") and name.endswith(".acf")):
                 continue
             try:
-                with open(os.path.join(apps, name), encoding="utf-8") as f:
+                with open(os.path.join(apps, name), encoding="utf-8", errors="replace") as f:
                     state = parse_vdf(f.read()).get("AppState", {})
             except OSError:
                 continue
