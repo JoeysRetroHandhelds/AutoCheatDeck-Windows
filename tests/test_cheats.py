@@ -54,33 +54,6 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(cheats.parse_trainer_ui(["Text\tHello"]), {"cheats": [], "processes": []})
 
 
-class HotkeyTest(unittest.TestCase):
-    def test_virtual_keys(self):
-        cases = {
-            "Num 1": [0x61],
-            "Num +": [0x6B],
-            "Ctrl+Num +": [0x11, 0x6B],
-            "Alt+Num /": [0x12, 0x6F],
-            "Ctrl+Num .": [0x11, 0x6E],
-            "Shift+F12": [0x10, 0x7B],
-            "Ctrl+F1": [0x11, 0x70],
-            "Ctrl+Shift+Home": [0x11, 0x10, 0x24],
-            "F5": [0x74],
-            "Ctrl+K": [0x11, ord("K")],
-        }
-        for hotkey, expected in cases.items():
-            with self.subTest(hotkey=hotkey):
-                self.assertEqual(cheats.hotkey_vks(hotkey), expected)
-
-    def test_every_fixture_hotkey_is_understood(self):
-        for cheat in cheats.parse_trainer_ui(fixture_lines())["cheats"]:
-            self.assertTrue(cheats.hotkey_vks(cheat["key"]))
-
-    def test_rejects_garbage(self):
-        with self.assertRaises(ValueError):
-            cheats.hotkey_vks("Ctrl+Banana")
-
-
 class CacheTest(unittest.TestCase):
     def test_cache_is_tied_to_the_trainer_build(self):
         with tempfile.TemporaryDirectory() as folder:

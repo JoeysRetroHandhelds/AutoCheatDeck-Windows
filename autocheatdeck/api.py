@@ -13,6 +13,9 @@ so the API costs nothing while unused.
   POST /api/games/<id>/toggle        {"name": "Infinite HP"} switch a cheat; returns {"on": bool}
   POST /api/games/<id>/value         {"name": "Edit Money", "value": "5000"}; returns {"value": str}
 
+Toggle and value take an optional "nth" (default 0) for the nth cheat of that name: trainers can
+repeat a name in different sections, and the cheats list says each cheat's nth.
+
 Launching, reading and toggling go through the admin helper (one UAC prompt per session).
 """
 
@@ -48,14 +51,22 @@ class Backend:
     def api_read(self, appid: str) -> dict:
         raise NotImplementedError
 
-    def api_toggle(self, appid: str, name: str) -> dict:
+    def api_toggle(self, appid: str, name: str, nth: int = 0) -> dict:
         raise NotImplementedError
 
-    def api_set_value(self, appid: str, name: str, value: str) -> dict:
+    def api_set_value(self, appid: str, name: str, value: str, nth: int = 0) -> dict:
         raise NotImplementedError
 
     def api_activity(self) -> None:
         """Called on every request (e.g. to postpone an idle shutdown)."""
+
+
+def _nth(body: dict) -> int:
+    """Which of the cheats sharing a name (0 = the first); ValueError (400) if it isn't a small number."""
+    nth = body.get("nth", 0)
+    if not isinstance(nth, int) or isinstance(nth, bool) or not 0 <= nth < 1000:
+        raise ValueError("Bad nth: {!r}".format(nth))
+    return nth
 
 
 def _handler(backend: Backend) -> type:
@@ -118,9 +129,10 @@ def _handler(backend: Backend) -> type:
                 if match and match.group(2) == "value":
                     body = self._body()
                     return self._reply(200, backend.api_set_value(match.group(1), str(body.get("name", "")),
-                                                                  str(body.get("value", ""))))
+                                                                  str(body.get("value", "")), _nth(body)))
                 if match and match.group(2) == "toggle":
-                    return self._reply(200, backend.api_toggle(match.group(1), str(self._body().get("name", ""))))
+                    body = self._body()
+                    return self._reply(200, backend.api_toggle(match.group(1), str(body.get("name", "")), _nth(body)))
                 self._reply(404, {"error": "not found"})
             except ValueError as e:
                 self._reply(400, {"error": str(e)})

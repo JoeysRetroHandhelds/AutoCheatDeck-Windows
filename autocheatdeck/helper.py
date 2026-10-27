@@ -128,20 +128,26 @@ function Read-States($title, [bool]$refresh) {
         @{ name = $r.name; on = (Is-On $r.toggle); kind = $r.kind; value = $v }
     })
 }
-function Set-CheatValue($title, $name, $value, [bool]$refresh) {
+function Set-CheatValue($title, $name, [int]$nth, $value, [bool]$refresh) {
     $entry = Get-Rows $title $refresh
     $row = $null
-    foreach ($r in $entry.rows) { if ($r.name -eq $name) { $row = $r; break } }
+    $seen = 0
+    foreach ($r in $entry.rows) {
+        if ($r.name -eq $name) { if ($seen -eq $nth) { $row = $r; break }; $seen++ }
+    }
     if (-not $row) { throw ("No cheat named " + $name) }
     if (-not $row.value) { throw ($name + " has no value to set") }
     $row.value.SetValue([string]$value)
     Hide-Trainer $entry.hwnd
     return $row.value.Current.Value
 }
-function Toggle-Cheat($title, $name, [bool]$refresh) {
+function Toggle-Cheat($title, $name, [int]$nth, [bool]$refresh) {
     $entry = Get-Rows $title $refresh
     $row = $null
-    foreach ($r in $entry.rows) { if ($r.name -eq $name) { $row = $r; break } }
+    $seen = 0
+    foreach ($r in $entry.rows) {
+        if ($r.name -eq $name) { if ($seen -eq $nth) { $row = $r; break }; $seen++ }
+    }
     if (-not $row) { throw ("No cheat named " + $name) }
     $before = Is-On $row.toggle
     $row.toggle.Toggle()
@@ -187,15 +193,6 @@ while ($true) {
                 if ($hwnd -ne [IntPtr]::Zero) { Hide-Trainer $hwnd }
                 $res = @{ ok = $true; hidden = ($hwnd -ne [IntPtr]::Zero) }
             }
-            'show-trainer' {
-                $hwnd = Trainer-Window $req.title
-                [void][Acd.Native]::EnableWindow($hwnd, $true)
-                [void][Acd.Native]::ShowWindow($hwnd, 9)   # SW_RESTORE
-                [Acd.Native]::keybd_event(0x12, 0, 0, [IntPtr]::Zero)  # Alt tap: lets us set the foreground
-                [Acd.Native]::keybd_event(0x12, 0, 2, [IntPtr]::Zero)
-                [void][Acd.Native]::SetForegroundWindow($hwnd)
-                $res = @{ ok = $true }
-            }
             'focus' {
                 # Give focus to one of the app's windows (the overlay). The trainer is elevated, so
                 # when it has taken focus only an elevated process can take it back.
@@ -210,10 +207,6 @@ while ($true) {
                     [void][Acd.Native]::EnableWindow($hwnd, $true)
                     [void][Acd.Native]::ShowWindow($hwnd, 7)   # SW_SHOWMINNOACTIVE
                 }
-                $res = @{ ok = $true }
-            }
-            'hide-trainer' {
-                Hide-Trainer (Trainer-Window $req.title)
                 $res = @{ ok = $true }
             }
             'dump' {
@@ -263,16 +256,16 @@ while ($true) {
                 $res = @{ ok = $true; states = $states }
             }
             'toggle' {
-                try { $on = Toggle-Cheat $req.title $req.name $false }
+                try { $on = Toggle-Cheat $req.title $req.name ([int]$req.nth) $false }
                 catch [Windows.Automation.ElementNotAvailableException] {
-                    $on = Toggle-Cheat $req.title $req.name $true
+                    $on = Toggle-Cheat $req.title $req.name ([int]$req.nth) $true
                 }
                 $res = @{ ok = $true; on = $on }
             }
             'set-value' {
-                try { $now = Set-CheatValue $req.title $req.name $req.value $false }
+                try { $now = Set-CheatValue $req.title $req.name ([int]$req.nth) $req.value $false }
                 catch [Windows.Automation.ElementNotAvailableException] {
-                    $now = Set-CheatValue $req.title $req.name $req.value $true
+                    $now = Set-CheatValue $req.title $req.name ([int]$req.nth) $req.value $true
                 }
                 $res = @{ ok = $true; value = $now }
             }
@@ -414,26 +407,26 @@ class Helper:
         """Every control in the trainer window, in order: depth, type, cls, id, name, patterns, value."""
         return list(self.request("dump-tree", title=trainer_title).get("tree") or [])
 
-    def states(self, trainer_title: str) -> dict[str, dict]:
-        """{cheat name: {"on": bool, "kind": row class, "value": str | None}} for every cheat row."""
+    def states(self, trainer_title: str) -> dict[str, list[dict]]:
+        """{cheat name: [{"on": bool, "kind": row class, "value": str | None}, ...]}, one entry per row
+        with that name in window order (a trainer can repeat a name in different sections)."""
         rows = self.request("states", title=trainer_title).get("states") or []
-        return {r["name"]: {"on": bool(r["on"]), "kind": r.get("kind", ""), "value": r.get("value")} for r in rows}
+        found: dict[str, list[dict]] = {}
+        for r in rows:
+            found.setdefault(r["name"], []).append(
+                {"on": bool(r["on"]), "kind": r.get("kind", ""), "value": r.get("value")})
+        return found
 
-    def set_value(self, trainer_title: str, cheat_name: str, value: str) -> str:
+    def set_value(self, trainer_title: str, cheat_name: str, value: str, nth: int = 0) -> str:
         """Put a value in the cheat's box; returns what the box holds afterwards."""
-        return str(self.request("set-value", title=trainer_title, name=cheat_name, value=value).get("value") or "")
+        reply = self.request("set-value", title=trainer_title, name=cheat_name, nth=nth, value=value)
+        return str(reply.get("value") or "")
 
-    def toggle(self, trainer_title: str, cheat_name: str) -> bool:
-        return bool(self.request("toggle", title=trainer_title, name=cheat_name).get("on"))
-
-    def show_trainer(self, trainer_title: str) -> None:
-        self.request("show-trainer", title=trainer_title)
+    def toggle(self, trainer_title: str, cheat_name: str, nth: int = 0) -> bool:
+        return bool(self.request("toggle", title=trainer_title, name=cheat_name, nth=nth).get("on"))
 
     def focus(self, hwnd: int) -> bool:
         return bool(self.request("focus", hwnd=int(hwnd)).get("ok"))
-
-    def hide_trainer(self, trainer_title: str) -> None:
-        self.request("hide-trainer", title=trainer_title)
 
 
 def trainer_title(trainer_path: str) -> str:

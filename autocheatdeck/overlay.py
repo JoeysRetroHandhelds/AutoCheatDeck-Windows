@@ -250,7 +250,7 @@ class Overlay:
             self._update_row(index, dict(self.cheats[index], value=result["value"]))
             self.status.configure(text="{} set to {}".format(cheat["name"], result["value"]))
 
-        self.app.run_bg(lambda: self.app.api_set_value(appid, cheat["name"], value), done)
+        self.app.run_bg(lambda: self.app.api_set_value(appid, cheat["name"], value, cheat.get("nth", 0)), done)
 
     def step_selected(self, direction: int) -> None:
         picked = self._selected()
@@ -319,7 +319,7 @@ class Overlay:
             self._update_row(index, dict(self.cheats[index], on=result["on"]))
             self.status.configure(text="{} is {}".format(cheat["name"], "on" if result["on"] else "off"))
 
-        self.app.run_bg(lambda: self.app.api_toggle(appid, cheat["name"]), done)
+        self.app.run_bg(lambda: self.app.api_toggle(appid, cheat["name"], cheat.get("nth", 0)), done)
 
     # ---------- controller / keyboard ----------
 
