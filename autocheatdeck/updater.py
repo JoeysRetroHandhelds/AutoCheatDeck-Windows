@@ -42,7 +42,7 @@ USER_AGENT = "AutoCheatDeck-Windows-Updater"
 MAX_DOWNLOAD_BYTES = 300 * 1024 * 1024
 # Releases are signed in CI with the matching private key (tools/sign_release.py). The .sha256 only
 # catches a broken download; the signature is what proves the zip came from this project.
-PUBLIC_KEY = bytes.fromhex("cfa5ee04c141a68321da20b118c74675f267dcb921a5a41f3ec96500348e34a0")
+PUBLIC_KEY = bytes.fromhex("056b3989bd5f6e3328bb05186cdc755f888961a1c2bde7cfc6445cc6b73afd6a")
 # Never touched by an update: the user's settings and trainers (and the update area itself).
 KEEP = {"data"}
 
