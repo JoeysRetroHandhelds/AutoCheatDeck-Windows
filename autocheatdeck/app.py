@@ -476,6 +476,10 @@ class App(api.Backend):
 
     def _idle_expired(self) -> None:
         self._idle_job = None
+        running = [t for t in self.helper.trainers if cheats.trainer_window_by_title(t)]
+        if running:
+            self._restart_idle_timer()  # keep the helper (and its one UAC approval) while playing
+            return
         if self.idle_quit and self.hidden and not self.overlay.visible:
             log.get().info("widget mode: no requests for %ss, quitting", self.idle_quit)
             self.quit()
@@ -486,7 +490,7 @@ class App(api.Backend):
 
     def api_games(self) -> list[dict]:
         self._games_ready.wait(15)  # a just-started app is still reading the game library
-        if not self.helper.running:
+        if not self.helper.running and not self.helper.declined:
             # The widget is open: start the admin helper now, so Launch doesn't wait for it.
             threading.Thread(target=self._warm_helper, name="helper-start", daemon=True).start()
         result = []

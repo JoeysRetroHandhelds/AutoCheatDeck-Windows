@@ -61,6 +61,7 @@ class Overlay:
         self.cheats: list[dict] = []
         self.visible = False
         self.focused_mode = True
+        self._holding = False  # holding the controller open (no-focus mode)
         self._previous = None  # window to give focus back to on close (the game)
         self._guard = None
 
@@ -69,12 +70,6 @@ class Overlay:
         top.overrideredirect(True)  # no title bar: a panel, not a window
         top.attributes("-topmost", True)
         top.attributes("-alpha", 0.95)
-        scale = app.scale
-        width = int(460 * scale)
-        height = int(top.winfo_screenheight() * 0.82)
-        x = top.winfo_screenwidth() - width - int(24 * scale)
-        y = int((top.winfo_screenheight() - height) / 2)
-        top.geometry("{}x{}+{}+{}".format(width, height, x, y))
 
         title_font = ("Segoe UI Semibold", 16)
         self.title = tk.Label(top, text="", bg=BG, fg=FG, font=title_font, anchor="w", padx=16, pady=10)
@@ -98,6 +93,15 @@ class Overlay:
 
     # ---------- open / close ----------
 
+    def _place(self) -> None:
+        """Right-hand panel sized for the screen as it is now (it can change: docking, resolution)."""
+        top, scale = self.top, self.app.scale
+        width = int(460 * scale)
+        height = int(top.winfo_screenheight() * 0.82)
+        x = top.winfo_screenwidth() - width - int(24 * scale)
+        y = int((top.winfo_screenheight() - height) / 2)
+        top.geometry("{}x{}+{}+{}".format(width, height, x, y))
+
     def open(self, appid: str) -> None:
         game = self.app.by_id.get(appid)
         entry = self.app.cfg.game(appid)
@@ -112,6 +116,7 @@ class Overlay:
         if not self.visible:
             self._previous = _user32.GetForegroundWindow()
         self.focused_mode = not exclusive_fullscreen()
+        self._place()
         self.top.deiconify()
         self.top.lift()
         self.visible = True
@@ -126,6 +131,9 @@ class Overlay:
         hwnd = self._hwnd()
         style = _user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
         if self.focused_mode:
+            if self._holding:
+                self._holding = False
+                self.app.gamepad.release()
             _user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style & ~WS_EX_NOACTIVATE)
             self.take_focus()
             if self._guard is None:
@@ -134,7 +142,9 @@ class Overlay:
             # Exclusive fullscreen: don't take focus (the game would minimize); read the controller
             # anyway while the overlay is open.
             _user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style | WS_EX_NOACTIVATE)
-            self.app.gamepad.hold()
+            if not self._holding:
+                self._holding = True
+                self.app.gamepad.hold()
 
     def take_focus(self) -> None:
         hwnd = self._hwnd()
@@ -161,7 +171,8 @@ class Overlay:
         if self._guard is not None:
             self._guard.stop()
             self._guard = None
-        if not self.focused_mode:
+        if self._holding:
+            self._holding = False
             self.app.gamepad.release()
         self.top.withdraw()
         if self._previous:

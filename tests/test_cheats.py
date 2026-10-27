@@ -1,8 +1,12 @@
 import os
+import sys
 import tempfile
 import unittest
 
-from autocheatdeck import cheats
+if sys.platform != "win32":
+    raise unittest.SkipTest("cheats uses the Windows API")
+
+from autocheatdeck import cheats  # noqa: E402
 
 FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "fling_trainer_ui.txt")
 

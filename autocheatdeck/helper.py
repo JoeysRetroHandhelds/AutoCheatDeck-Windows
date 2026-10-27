@@ -175,6 +175,15 @@ while ($true) {
                 [Acd.Native]::keybd_event(0x12, 0, 2, [IntPtr]::Zero)
                 $res = @{ ok = [Acd.Native]::SetForegroundWindow([IntPtr][long]$req.hwnd) }
             }
+            'release-trainer' {
+                # Give the trainer its window back without taking focus (the app is quitting).
+                $hwnd = [Acd.Native]::FindWindow([NullString]::Value, $req.title)
+                if ($hwnd -ne [IntPtr]::Zero) {
+                    [void][Acd.Native]::EnableWindow($hwnd, $true)
+                    [void][Acd.Native]::ShowWindow($hwnd, 7)   # SW_SHOWMINNOACTIVE
+                }
+                $res = @{ ok = $true }
+            }
             'hide-trainer' {
                 Hide-Trainer (Trainer-Window $req.title)
                 $res = @{ ok = $true }
@@ -248,6 +257,8 @@ class Helper:
     def __init__(self):
         self._lock = threading.Lock()
         self._pipe = None
+        self.trainers: set[str] = set()  # titles of trainers the helper started (kept hidden)
+        self.declined = False  # the UAC prompt was declined: don't ask again unprompted
 
     @property
     def running(self) -> bool:
@@ -261,7 +272,9 @@ class Helper:
                                  LAUNCH_OUTER.format(encoded)],
                                 capture_output=True, creationflags=elevate.NO_WINDOW, timeout=300, check=False)
         if result.returncode != 0:
+            self.declined = True
             raise HelperError("Toggling cheats needs administrator approval.")
+        self.declined = False
         path = r"\\.\pipe\{}".format(name)
         deadline = time.monotonic() + 20
         while True:
@@ -308,7 +321,16 @@ class Helper:
             self._pipe = None
 
     def stop(self) -> None:
-        """Closing our end makes the helper exit."""
+        """Hand hidden trainers back, then close our end (which makes the helper exit)."""
+        if self._pipe is not None:
+            for title in list(self.trainers):
+                if self._pipe is None:
+                    break  # the helper is gone; never start a new one (and a UAC prompt) to quit
+                try:
+                    self.request("release-trainer", title=title)
+                except (HelperError, ValueError):
+                    pass
+        self.trainers.clear()
         with self._lock:
             self._close()
 
@@ -316,6 +338,7 @@ class Helper:
 
     def launch(self, trainer_path: str) -> None:
         self.request("launch", path=trainer_path, title=trainer_title(trainer_path))
+        self.trainers.add(trainer_title(trainer_path))
 
     def dump(self, trainer_title: str) -> list[str]:
         return list(self.request("dump", title=trainer_title).get("lines") or [])
