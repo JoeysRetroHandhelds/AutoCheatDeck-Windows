@@ -10,7 +10,8 @@ polling) takes focus straight back whenever the trainer grabs it.
 
 Games in exclusive fullscreen would minimize if the overlay took focus, so for those it opens
 without taking focus. The controller can't drive it then (the game is in front and would get every
-press too), so it says so: touch works, or the game can be switched to borderless.
+press too), so it says so: touch works (buttons for values, a number pad for amounts, Close), or the
+game can be switched to borderless.
 """
 
 import ctypes
@@ -94,10 +95,33 @@ class Overlay:
         scroll.pack(side="right", fill="y")
         self.list.bind("<Double-Button-1>", lambda _: self.toggle_selected())
 
+        # Touch / mouse controls for values (over exclusive fullscreen games touch is the only input).
+        bar = tk.Frame(top, bg=BG, padx=12)
+        bar.pack(fill="x")
+        for text, command in (("\u2212", lambda: self.step_selected(-1)), ("+", lambda: self.step_selected(1)),
+                              ("Amount", self.type_selected), ("Close", self.close)):
+            self._touch_button(bar, text, command).pack(side="left", expand=True, fill="x", padx=3)
+        # Number pad for typing an amount by touch (shown while typing).
+        self.keypad = tk.Frame(top, bg=BG, padx=12, pady=4)
+        keys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "\u232b", "0", "Set"]
+        for i, key in enumerate(keys):
+            special = {"\u232b": self._typed_backspace, "Set": self._typed_set}
+            command = special.get(key, lambda k=key: self._typed_add(k))
+            self._touch_button(self.keypad, key, command).grid(row=i // 3, column=i % 3, sticky="nsew", padx=3, pady=3)
+        for column in range(3):
+            self.keypad.columnconfigure(column, weight=1)
+        self._typed: str | None = None  # the amount being typed on the number pad
+
         self.footer = tk.Label(top, text="", bg=BG, fg=DIM, font=("Segoe UI", 11), pady=8)
         self.footer.pack(fill="x")
-        # B / Esc never reach the overlay in no-focus mode, so tapping the footer closes it too.
-        self.footer.bind("<Button-1>", lambda _: self.close())
+
+    @staticmethod
+    def _touch_button(parent, text: str, command) -> tk.Button:
+        # Plain tk buttons: they work in the no-focus (exclusive fullscreen) window, where ttk's
+        # focus-driven styling has nothing to show.
+        return tk.Button(parent, text=text, command=command, bg=ROW_BG, fg=FG, activebackground=ACCENT,
+                         activeforeground="white", relief="flat", font=("Segoe UI", 14), takefocus=False,
+                         pady=6)
 
     # ---------- open / close ----------
 
@@ -126,7 +150,7 @@ class Overlay:
         self.focused_mode = not exclusive_fullscreen()
         self._place()
         self.footer.configure(text="A toggle    < > change value    Y type amount    B close" if self.focused_mode
-                              else "Double-tap a cheat to toggle it      Tap here to close")
+                              else "Double-tap a cheat to toggle it")
         self.top.deiconify()
         self.top.lift()
         self.visible = True
@@ -284,6 +308,45 @@ class Overlay:
     def _stop_editing(self) -> None:
         self.editor = None
         self._editing = -1
+        self._typed = None
+        self.keypad.pack_forget()
+
+    # Typing an amount by touch
+
+    def type_selected(self) -> None:
+        picked = self._selected()
+        if not picked:
+            return
+        index, cheat = picked
+        if values.kind_of(cheat.get("kind", "")) != "type" or cheat.get("value") in (None, ""):
+            self.status.configure(text="This cheat has no amount to type.")
+            return
+        self._stop_editing()
+        self._editing = index
+        self._typed = ""
+        self.keypad.pack(fill="x", before=self.footer)
+        self._show_typed()
+
+    def _show_typed(self) -> None:
+        self.status.configure(text="{}:  {}_".format(self.cheats[self._editing]["name"], self._typed))
+
+    def _typed_add(self, digit: str) -> None:
+        if self._typed is not None and len(self._typed) < values.MAX_DIGITS:
+            self._typed = (self._typed + digit).lstrip("0") or "0"
+            self._show_typed()
+
+    def _typed_backspace(self) -> None:
+        if self._typed:
+            self._typed = self._typed[:-1]
+            self._show_typed()
+
+    def _typed_set(self) -> None:
+        if self._typed is None or self._editing >= len(self.cheats):
+            return
+        index, value = self._editing, self._typed or "0"
+        self._stop_editing()
+        self.status.configure(text="Setting...")
+        self.set_value(index, self.cheats[index], value)
 
     def _editor_pad(self, name: str) -> None:
         if name == "b":
@@ -326,6 +389,13 @@ class Overlay:
     def on_pad(self, name: str) -> None:
         if self.editor is not None:
             self._editor_pad(name)
+        elif self._typed is not None and name in ("a", "b"):
+            # Number pad open (keyboard / controller while typing by touch): A sets, B cancels.
+            if name == "a":
+                self._typed_set()
+            else:
+                self._stop_editing()
+                self.status.configure(text="")
         elif name == "a":
             self.toggle_selected()
         elif name in ("left", "right"):
