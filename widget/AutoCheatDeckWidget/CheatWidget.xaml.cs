@@ -251,14 +251,15 @@ namespace AutoCheatDeckWidget
                 notes.Add(section);
             }
             var kind = cheat.GetNamedString("kind", "");
-            if (kind == "CheatOptionSetComboBox")
+            var value = cheat.GetNamedValue("value");
+            var shown = value.ValueType == JsonValueType.String ? value.GetString() : "";
+            if (kind.StartsWith("CheatOptionWithInputAdjustment") || kind == "CheatOptionSetComboBox")
             {
-                notes.Add("pick the option in the trainer window");
+                notes.Add((shown != "" ? shown + " · " : "") + "change with Left / Right in the overlay");
             }
-            else if (kind.StartsWith("CheatOptionSetValue") || kind.StartsWith("CheatOptionWithInput")
-                     || cheat.GetNamedBoolean("adjustable", false))
+            else if (kind.StartsWith("CheatOptionSetValue") || kind.StartsWith("CheatOptionWithInput"))
             {
-                notes.Add("value set in the trainer window");
+                notes.Add((shown != "" ? shown + " · " : "") + "type an amount with Y in the overlay");
             }
             var on = cheat.GetNamedValue("on");
             return new CheatItem

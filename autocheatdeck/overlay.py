@@ -18,7 +18,7 @@ import tkinter as tk
 from ctypes import wintypes
 from tkinter import ttk
 
-from . import log, winapi
+from . import log, values, winapi
 
 BG = "#14161c"
 ROW_BG = "#1d2029"
@@ -65,6 +65,8 @@ class Overlay:
         self.trainer_title = ""
         self.cheats: list[dict] = []
         self.visible = False
+        self.editor: values.DigitEditor | None = None  # open while typing an amount (Y)
+        self._editing = -1  # index of the cheat being edited
         self.focused_mode = True
         self._previous = None  # window to give focus back to on close (the game)
         self._guard = None
@@ -123,7 +125,7 @@ class Overlay:
             self._previous = _user32.GetForegroundWindow()
         self.focused_mode = not exclusive_fullscreen()
         self._place()
-        self.footer.configure(text="A / Enter  toggle      B / Esc  close      LB / RB  page" if self.focused_mode
+        self.footer.configure(text="A toggle    < > change value    Y type amount    B close" if self.focused_mode
                               else "Double-tap a cheat to toggle it      Tap here to close")
         self.top.deiconify()
         self.top.lift()
@@ -168,6 +170,7 @@ class Overlay:
     def close(self) -> None:
         if not self.visible:
             return
+        self._stop_editing()
         self.visible = False
         if self._guard is not None:
             self._guard.stop()
@@ -214,8 +217,87 @@ class Overlay:
     @staticmethod
     def _label(cheat: dict) -> str:
         state = {True: "ON ", False: "OFF", None: " - "}[cheat.get("on")]
+        value = cheat.get("value")
+        kind = values.kind_of(cheat.get("kind", ""))
+        shown = ""
+        if value not in (None, ""):
+            shown = "   \u2039 {} \u203a".format(value) if kind == "step" else "   = {}".format(value)
         section = "   ({})".format(cheat["section"]) if cheat.get("section") else ""
-        return "  {}    {}{}".format(state, cheat["name"], section)
+        return "  {}    {}{}{}".format(state, cheat["name"], shown, section)
+
+    def _selected(self) -> tuple[int, dict] | None:
+        selection = self.list.curselection()
+        if not selection or not self.cheats or selection[0] >= len(self.cheats):
+            return None
+        return selection[0], self.cheats[selection[0]]
+
+    def _update_row(self, index: int, cheat: dict) -> None:
+        self.cheats[index] = cheat
+        self.list.delete(index)
+        self.list.insert(index, self._label(cheat))
+        self._color(index, cheat)
+        self.list.selection_set(index)
+        self.list.activate(index)
+
+    # ---------- values ----------
+
+    def set_value(self, index: int, cheat: dict, value: str) -> None:
+        appid = self.appid
+
+        def done(result: dict) -> None:
+            if appid != self.appid or index >= len(self.cheats):
+                return
+            self._update_row(index, dict(self.cheats[index], value=result["value"]))
+            self.status.configure(text="{} set to {}".format(cheat["name"], result["value"]))
+
+        self.app.run_bg(lambda: self.app.api_set_value(appid, cheat["name"], value), done)
+
+    def step_selected(self, direction: int) -> None:
+        picked = self._selected()
+        if not picked:
+            return
+        index, cheat = picked
+        if values.kind_of(cheat.get("kind", "")) != "step" or cheat.get("value") in (None, ""):
+            return
+        new = values.step(str(cheat["value"]), direction)
+        self._update_row(index, dict(cheat, value=new))  # show it now; the trainer's reply follows
+        self.set_value(index, cheat, new)
+
+    def edit_selected(self) -> None:
+        picked = self._selected()
+        if not picked:
+            return
+        index, cheat = picked
+        # Some rows of an amount kind keep their box hidden (no value): nothing to type there.
+        if values.kind_of(cheat.get("kind", "")) != "type" or cheat.get("value") in (None, ""):
+            self.status.configure(text="This cheat has no amount to type.")
+            return
+        self.editor = values.DigitEditor(str(cheat.get("value") or "0"))
+        self._editing = index
+        self._show_editor()
+
+    def _show_editor(self) -> None:
+        cheat = self.cheats[self._editing]
+        self.status.configure(text="{}:  {}\nUp / Down digit   Left / Right move   A set   B cancel".format(
+            cheat["name"], self.editor.display()))
+
+    def _stop_editing(self) -> None:
+        self.editor = None
+        self._editing = -1
+
+    def _editor_pad(self, name: str) -> None:
+        if name == "b":
+            self._stop_editing()
+            self.status.configure(text="")
+        elif name == "a":
+            index, value = self._editing, self.editor.value
+            self._stop_editing()
+            if index < len(self.cheats):
+                self.status.configure(text="Setting...")
+                self.set_value(index, self.cheats[index], value)
+        elif name in ("up", "down", "left", "right"):
+            getattr(self.editor, name)()
+            self._show_editor()
 
     def _color(self, index: int, cheat: dict) -> None:
         self.list.itemconfigure(index, foreground=ON if cheat.get("on") else FG)
@@ -234,12 +316,7 @@ class Overlay:
         def done(result: dict) -> None:
             if appid != self.appid or index >= len(self.cheats):
                 return
-            self.cheats[index] = dict(cheat, on=result["on"])
-            self.list.delete(index)
-            self.list.insert(index, self._label(self.cheats[index]))
-            self._color(index, self.cheats[index])
-            self.list.selection_set(index)
-            self.list.activate(index)
+            self._update_row(index, dict(self.cheats[index], on=result["on"]))
             self.status.configure(text="{} is {}".format(cheat["name"], "on" if result["on"] else "off"))
 
         self.app.run_bg(lambda: self.app.api_toggle(appid, cheat["name"]), done)
@@ -247,8 +324,14 @@ class Overlay:
     # ---------- controller / keyboard ----------
 
     def on_pad(self, name: str) -> None:
-        if name == "a":
+        if self.editor is not None:
+            self._editor_pad(name)
+        elif name == "a":
             self.toggle_selected()
+        elif name in ("left", "right"):
+            self.step_selected(-1 if name == "left" else 1)
+        elif name == "y":
+            self.edit_selected()
         elif name == "b":
             self.close()
         elif name in ("up", "down", "lb", "rb"):

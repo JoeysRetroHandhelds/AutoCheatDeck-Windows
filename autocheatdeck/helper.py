@@ -98,7 +98,22 @@ function Get-Rows($title, [bool]$refresh) {
             $label = $row.FindFirst($scope::Children, $nameCond)
             if (-not $label) { continue }
             $toggle = $button.GetCurrentPattern([Windows.Automation.TogglePattern]::Pattern)
-            [void]$rows.Add(@{ name = $label.Current.Name; kind = $row.Current.ClassName; toggle = $toggle })
+            # The row's value box, if it has one: an option list (m_box) or a text box (m_textbox).
+            $value = $null
+            $boxCond = New-Object Windows.Automation.PropertyCondition $idProp, 'm_box'
+            $box = $row.FindFirst($scope::Descendants, $boxCond)
+            if (-not $box) {
+                $box = $row.FindFirst($scope::Descendants, (New-Object Windows.Automation.AndCondition `
+                    (New-Object Windows.Automation.PropertyCondition $idProp, 'm_textbox'), `
+                    (New-Object Windows.Automation.PropertyCondition $auto::ControlTypeProperty, `
+                        ([Windows.Automation.ControlType]::Edit))))
+            }
+            $vp = $null
+            if ($box -and $box.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern, [ref]$vp)) {
+                $value = $vp
+            }
+            [void]$rows.Add(@{ name = $label.Current.Name; kind = $row.Current.ClassName; toggle = $toggle
+                value = $value })
         }
         $entry = @{ hwnd = $hwnd; rows = $rows }
         $cache[$title] = $entry
@@ -108,7 +123,20 @@ function Get-Rows($title, [bool]$refresh) {
 function Is-On($toggle) { return ($toggle.Current.ToggleState -eq 'On') }
 function Read-States($title, [bool]$refresh) {
     $entry = Get-Rows $title $refresh
-    return @(foreach ($r in $entry.rows) { @{ name = $r.name; on = (Is-On $r.toggle); kind = $r.kind } })
+    return @(foreach ($r in $entry.rows) {
+        $v = if ($r.value) { $r.value.Current.Value } else { $null }
+        @{ name = $r.name; on = (Is-On $r.toggle); kind = $r.kind; value = $v }
+    })
+}
+function Set-CheatValue($title, $name, $value, [bool]$refresh) {
+    $entry = Get-Rows $title $refresh
+    $row = $null
+    foreach ($r in $entry.rows) { if ($r.name -eq $name) { $row = $r; break } }
+    if (-not $row) { throw ("No cheat named " + $name) }
+    if (-not $row.value) { throw ($name + " has no value to set") }
+    $row.value.SetValue([string]$value)
+    Hide-Trainer $entry.hwnd
+    return $row.value.Current.Value
 }
 function Toggle-Cheat($title, $name, [bool]$refresh) {
     $entry = Get-Rows $title $refresh
@@ -240,6 +268,13 @@ while ($true) {
                     $on = Toggle-Cheat $req.title $req.name $true
                 }
                 $res = @{ ok = $true; on = $on }
+            }
+            'set-value' {
+                try { $now = Set-CheatValue $req.title $req.name $req.value $false }
+                catch [Windows.Automation.ElementNotAvailableException] {
+                    $now = Set-CheatValue $req.title $req.name $req.value $true
+                }
+                $res = @{ ok = $true; value = $now }
             }
             'quit' { $writer.WriteLine('{"ok":true}'); exit 0 }
             default { throw ("Unknown command " + $req.cmd) }
@@ -380,9 +415,13 @@ class Helper:
         return list(self.request("dump-tree", title=trainer_title).get("tree") or [])
 
     def states(self, trainer_title: str) -> dict[str, dict]:
-        """{cheat name: {"on": bool, "kind": row class}} for every cheat row the trainer shows."""
+        """{cheat name: {"on": bool, "kind": row class, "value": str | None}} for every cheat row."""
         rows = self.request("states", title=trainer_title).get("states") or []
-        return {r["name"]: {"on": bool(r["on"]), "kind": r.get("kind", "")} for r in rows}
+        return {r["name"]: {"on": bool(r["on"]), "kind": r.get("kind", ""), "value": r.get("value")} for r in rows}
+
+    def set_value(self, trainer_title: str, cheat_name: str, value: str) -> str:
+        """Put a value in the cheat's box; returns what the box holds afterwards."""
+        return str(self.request("set-value", title=trainer_title, name=cheat_name, value=value).get("value") or "")
 
     def toggle(self, trainer_title: str, cheat_name: str) -> bool:
         return bool(self.request("toggle", title=trainer_title, name=cheat_name).get("on"))
