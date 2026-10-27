@@ -15,6 +15,9 @@ def _ps_literal(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
+ps_literal = _ps_literal  # for callers building PowerShell commands
+
+
 def encoded_script(script: str, **values: str) -> str:
     """The script with `values` set as $variables first, base64 UTF-16 for -EncodedCommand."""
     prelude = "".join("${} = {}\n".format(name, _ps_literal(value)) for name, value in values.items())

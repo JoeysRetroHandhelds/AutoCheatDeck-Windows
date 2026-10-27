@@ -39,7 +39,9 @@ The overlay also has touch / mouse buttons: double-tap a cheat to switch it, **â
 
 Games in *exclusive* fullscreen would minimize if the overlay took focus, so over those it opens without focus and works by touch only. To use the controller, set the game's display mode to **Borderless** (most recent games already are).
 
-**Installing the widget.** Download `AutoCheatDeckWidget.msixbundle` and `AutoCheatDeckWidget.cer` from the release. Trust the certificate once (as administrator: import the `.cer` into *Local Machine > Trusted People*), then double-click the bundle to install it. Game Bar only lists signed widgets. Open AutoCheatDeck on the desktop once afterwards so the widget can find it.
+**Installing the widget.** Press **Install Game Bar widget** at the bottom of AutoCheatDeck's window and approve the one administrator prompt (Windows has to trust the widget's signing certificate; that's asked only once). Then open Game Bar and choose **Widgets > AutoCheatDeck**. When an AutoCheatDeck update brings a newer widget, the button says **Update Game Bar widget**.
+
+To install it by hand instead: download `AutoCheatDeckWidget.msixbundle` and `AutoCheatDeckWidget.cer` from the release, import the `.cer` into *Local Machine > Trusted People* as administrator, then open the bundle.
 
 To build it yourself, open `widget/AutoCheatDeckWidget` in Visual Studio with the UWP workload (the full-trust launcher is compiled automatically) and sign the package with your own certificate.
 
