@@ -543,6 +543,10 @@ class App(api.Backend):
     def api_launch(self, appid: str) -> dict:
         entry = self._trainer(appid)
         if not cheats.trainer_window(entry["path"]):
+            actual = fling.check_trainer(entry["path"], os.path.join(config.trainers_dir(), appid),
+                                         entry.get("exeSha256"))
+            if not entry.get("exeSha256"):  # installed before fingerprints were recorded
+                self.post(lambda: self.cfg.set_game(appid, dict(entry, exeSha256=actual)))
             self.helper.launch(entry["path"])  # the helper is elevated: no second prompt for the trainer
             log.get().info("started trainer %s (via helper)", entry["path"])
             self.post(lambda: self._record_played({appid}, int(time.time())))
@@ -602,6 +606,7 @@ class App(api.Backend):
                 "pageUrl": page["url"],
                 "path": result["path"],
                 "sha256": result["sha256"],
+                "exeSha256": result["exeSha256"],  # checked before the admin helper starts it
                 "gameBuild": game.build,  # the game version this trainer was installed for
             })
             self.set_status("Installed {}".format(version["title"]))
