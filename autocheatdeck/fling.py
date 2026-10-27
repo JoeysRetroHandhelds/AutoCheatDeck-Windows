@@ -185,4 +185,29 @@ def download(download_url: str, page_url: str, target_dir: str) -> dict:
             os.remove(tmp_path)
     shutil.rmtree(previous, ignore_errors=True)
 
-    return {"path": exe_path, "sha256": digest.hexdigest(), "size": size}
+    return {"path": exe_path, "sha256": digest.hexdigest(), "size": size, "exeSha256": file_sha256(exe_path)}
+
+
+def file_sha256(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        while chunk := f.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def check_trainer(path: str, folder: str, expected_sha256: str | None) -> str:
+    """Before the admin helper starts a trainer: it must be inside the game's trainer folder and,
+    when its fingerprint was recorded, unchanged since the download. Returns its SHA-256.
+
+    The local API means any program running as the user can ask for a launch, and the admin helper
+    starts it without a UAC prompt. This keeps that to the trainer that was downloaded, instead of
+    whatever exe a changed config.json points at.
+    """
+    real, root = os.path.realpath(path), os.path.realpath(folder)
+    if not real.startswith(root + os.sep) or not real.lower().endswith(".exe"):
+        raise ValueError("The trainer isn't in AutoCheatDeck's trainer folder; reinstall it.")
+    actual = file_sha256(real)
+    if expected_sha256 and actual != expected_sha256:
+        raise ValueError("The trainer file changed since it was downloaded; reinstall it.")
+    return actual
