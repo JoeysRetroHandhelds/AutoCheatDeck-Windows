@@ -84,7 +84,10 @@ _user32.FindWindowW.restype = wintypes.HWND
 
 def trainer_window(trainer_path: str) -> int:
     """The trainer's main window: FLiNG titles it after the exe ("<Game> v1.0 Plus 50 Trainer")."""
-    title = os.path.splitext(os.path.basename(trainer_path))[0]
+    return trainer_window_by_title(os.path.splitext(os.path.basename(trainer_path))[0])
+
+
+def trainer_window_by_title(title: str) -> int:
     return _user32.FindWindowW(None, title) or 0
 
 

@@ -1,5 +1,6 @@
 import http.client
 import json
+import sys
 import unittest
 
 from autocheatdeck import api
@@ -99,6 +100,7 @@ class ApiTest(unittest.TestCase):
             http.client.HTTPConnection("127.0.0.1", self.server.port, timeout=2).request("GET", "/api/games")
 
 
+@unittest.skipUnless(sys.platform == "win32", "uses the Windows registry")
 class ProtocolTest(unittest.TestCase):
     def test_link_starts_the_app_in_widget_mode(self):
         from autocheatdeck import protocol
