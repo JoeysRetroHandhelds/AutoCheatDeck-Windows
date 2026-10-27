@@ -3,7 +3,8 @@
 The release is a zip of the whole app folder (AutoCheatDeck.exe + _internal/ + docs). Windows
 locks a running app's files, so updating is a hand-off:
 
-1. The running app downloads the zip, verifies its SHA-256 and unpacks it to data/update/staging.
+1. The running app downloads the zip, checks its SHA-256 and the release key's signature over it,
+   and unpacks it to data/update/staging.
 2. It starts the staged exe with --finish-update <its pid> <app dir> and exits.
 3. The staged copy waits for that pid, moves the old app files to data/update/outgoing, copies
    itself into the app folder, keeps the old files as data/update/previous and relaunches the
@@ -12,6 +13,8 @@ locks a running app's files, so updating is a hand-off:
 Restoring the previous version stages a copy of data/update/previous and runs the same hand-off.
 """
 
+import base64
+import binascii
 import hashlib
 import json
 import os
@@ -23,7 +26,7 @@ import urllib.parse
 import urllib.request
 import zipfile
 
-from . import tls
+from . import ed25519, tls
 
 REPO = "JoeysRetroHandhelds/AutoCheatDeck-Windows"
 API_URL = "https://api.github.com/repos/{}/releases/latest".format(REPO)
@@ -37,6 +40,9 @@ ALLOWED_HOSTS = {
 }
 USER_AGENT = "AutoCheatDeck-Windows-Updater"
 MAX_DOWNLOAD_BYTES = 300 * 1024 * 1024
+# Releases are signed in CI with the matching private key (tools/sign_release.py). The .sha256 only
+# catches a broken download; the signature is what proves the zip came from this project.
+PUBLIC_KEY = bytes.fromhex("cfa5ee04c141a68321da20b118c74675f267dcb921a5a41f3ec96500348e34a0")
 # Never touched by an update: the user's settings and trainers (and the update area itself).
 KEEP = {"data"}
 
@@ -75,11 +81,28 @@ def latest_release() -> dict:
         return json.load(response)
 
 
-def pick_assets(release: dict) -> tuple[str, str]:
+def pick_assets(release: dict) -> tuple[str, str, str]:
     assets = {a["name"]: a["browser_download_url"] for a in release.get("assets", [])}
-    if ASSET_NAME not in assets or ASSET_NAME + ".sha256" not in assets:
-        raise ValueError("Release is missing {} or its .sha256".format(ASSET_NAME))
-    return assets[ASSET_NAME], assets[ASSET_NAME + ".sha256"]
+    names = (ASSET_NAME, ASSET_NAME + ".sha256", ASSET_NAME + ".sig")
+    missing = [name for name in names if name not in assets]
+    if missing:
+        raise ValueError("Release is missing {}".format(", ".join(missing)))
+    return assets[names[0]], assets[names[1]], assets[names[2]]
+
+
+def signed_message(tag: str, sha256_hex: str) -> bytes:
+    """What a release signature covers. The tag is included so an older signed zip can't be
+    offered as a newer version."""
+    return "AutoCheatDeck-Windows release\n{}\n{}\n".format(tag, sha256_hex.lower()).encode("utf-8")
+
+
+def verify_signature(tag: str, sha256_hex: str, signature_text: str) -> None:
+    try:
+        signature = base64.b64decode(signature_text.strip(), validate=True)
+    except (binascii.Error, ValueError):
+        signature = b""
+    if not ed25519.verify(PUBLIC_KEY, signed_message(tag, sha256_hex), signature):
+        raise ValueError("The update's signature is not valid; not installing it.")
 
 
 def check(current_version: str) -> dict:
@@ -161,7 +184,8 @@ def _extract_app(zip_path: str, dest: str) -> str:
 def stage_update(app_dir: str, release: dict | None = None) -> str:
     """Download, verify and unpack the latest release into the staging folder. Returns its tag."""
     release = release or latest_release()
-    zip_url, sha_url = pick_assets(release)
+    zip_url, sha_url, sig_url = pick_assets(release)
+    tag = release.get("tag_name", "")
     work = update_dir(app_dir)
     os.makedirs(work, exist_ok=True)
     zip_path = os.path.join(work, "download.zip")
@@ -173,9 +197,12 @@ def stage_update(app_dir: str, release: dict | None = None) -> str:
         if not words:
             raise ValueError("Release checksum file is empty")
         expected = words[0].lower()
+        with _open(sig_url) as response:
+            signature = response.read(4096).decode("ascii", errors="replace")
         actual = _download(zip_url, zip_path)
         if actual != expected:
             raise ValueError("Checksum mismatch: expected {}, got {}".format(expected, actual))
+        verify_signature(tag, actual, signature)
         _rmtree(extract)
         app_root = _extract_app(zip_path, extract)
         _rmtree(staging)
@@ -183,7 +210,7 @@ def stage_update(app_dir: str, release: dict | None = None) -> str:
     finally:
         _rmtree(zip_path)
         _rmtree(extract)
-    return release.get("tag_name", "")
+    return tag
 
 
 def stage_rollback(app_dir: str) -> None:

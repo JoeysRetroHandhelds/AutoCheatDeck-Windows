@@ -1,13 +1,21 @@
+import base64
 import hashlib
 import io
 import json
 import os
+import sys
 import tempfile
 import unittest
 import zipfile
 from unittest import mock
 
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
 from autocheatdeck import fling, steam, updater
+
+TEST_KEY = Ed25519PrivateKey.generate()
+TEST_PUBLIC_KEY = TEST_KEY.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
 
 FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures")
 
@@ -52,6 +60,7 @@ class SteamTest(unittest.TestCase):
         self.assertEqual([g.name for g in games], ["ELDEN RING", "Hades", "Balatro", "Portal 2"])
 
 
+@unittest.skipUnless(sys.platform == "win32", "needs Windows")
 class LaunchTest(unittest.TestCase):
     def test_launch_trainer_passes_valid_startfile_arguments(self):
         from autocheatdeck import app
@@ -98,19 +107,25 @@ def make_zip(version: str, extra: dict | None = None, exe: bytes | None = None) 
     return buffer.getvalue()
 
 
-def fake_open(payload: bytes, checksum: str | None = None):
+def fake_open(payload: bytes, checksum: str | None = None, signed_tag: str = "v1.1.0", key=None):
     checksum = checksum or hashlib.sha256(payload).hexdigest()
+    signature = (key or TEST_KEY).sign(updater.signed_message(signed_tag, hashlib.sha256(payload).hexdigest()))
     release = {"tag_name": "v1.1.0", "assets": [
         {"name": "AutoCheatDeck-win64.zip", "browser_download_url": ZIP_URL},
         {"name": "AutoCheatDeck-win64.zip.sha256", "browser_download_url": ZIP_URL + ".sha256"},
+        {"name": "AutoCheatDeck-win64.zip.sig", "browser_download_url": ZIP_URL + ".sig"},
     ]}
     responses = {updater.API_URL: json.dumps(release).encode(), ZIP_URL: payload,
-                 ZIP_URL + ".sha256": (checksum + " *AutoCheatDeck-win64.zip\n").encode()}
+                 ZIP_URL + ".sha256": (checksum + " *AutoCheatDeck-win64.zip\n").encode(),
+                 ZIP_URL + ".sig": base64.b64encode(signature)}
     return lambda url: FakeResponse(responses[url], url)
 
 
 class UpdaterTest(unittest.TestCase):
     def setUp(self):
+        key = mock.patch.object(updater, "PUBLIC_KEY", TEST_PUBLIC_KEY)
+        key.start()
+        self.addCleanup(key.stop)
         self.tmp = tempfile.TemporaryDirectory()
         self.app = os.path.join(self.tmp.name, "AutoCheatDeck")
         for name, data in {"AutoCheatDeck.exe": "MZ 1.0.0", "_internal/lib.dll": "1.0.0", "README.md": "1.0.0",
@@ -168,6 +183,16 @@ class UpdaterTest(unittest.TestCase):
         for payload, checksum in bad:
             with mock.patch.object(updater, "_open", fake_open(payload, checksum)):
                 with self.assertRaises(ValueError):
+                    updater.stage_update(self.app)
+            self.assert_version("1.0.0")
+            self.assertFalse(os.path.exists(updater.staging_dir(self.app)))
+
+    def test_unsigned_or_mis_signed_updates_are_refused(self):
+        payload = make_zip("1.1.0")
+        for opener in (fake_open(payload, key=Ed25519PrivateKey.generate()),  # someone else's key
+                       fake_open(payload, signed_tag="v1.0.5")):  # an older release re-tagged as newer
+            with mock.patch.object(updater, "_open", opener):
+                with self.assertRaisesRegex(ValueError, "signature"):
                     updater.stage_update(self.app)
             self.assert_version("1.0.0")
             self.assertFalse(os.path.exists(updater.staging_dir(self.app)))

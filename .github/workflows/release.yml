@@ -18,10 +18,10 @@ jobs:
         with:
           python-version: '3.13'
       - name: Install tools
-        run: pip install pyinstaller flake8 pystray pillow
+        run: pip install pyinstaller flake8 pystray pillow cryptography
       - name: Lint and test
         run: |
-          flake8 --max-line-length=120 autocheatdeck main.py tests
+          flake8 --max-line-length=120 autocheatdeck main.py tests tools
           python -m unittest discover -s tests -t .
       - name: Check tag matches app version
         if: github.ref_type == 'tag'
@@ -39,6 +39,11 @@ jobs:
           Compress-Archive -Path dist/AutoCheatDeck -DestinationPath release/AutoCheatDeck-win64.zip
           $hash = (Get-FileHash release/AutoCheatDeck-win64.zip -Algorithm SHA256).Hash.ToLower()
           "$hash *AutoCheatDeck-win64.zip" | Out-File -Encoding ascii -NoNewline release/AutoCheatDeck-win64.zip.sha256
+      - name: Sign
+        if: github.ref_type == 'tag'
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: python tools/sign_release.py release/AutoCheatDeck-win64.zip ${{ github.ref_name }}
       - uses: actions/upload-artifact@v6
         with:
           name: AutoCheatDeck-win64
@@ -52,3 +57,4 @@ jobs:
           files: |
             release/AutoCheatDeck-win64.zip
             release/AutoCheatDeck-win64.zip.sha256
+            release/AutoCheatDeck-win64.zip.sig
