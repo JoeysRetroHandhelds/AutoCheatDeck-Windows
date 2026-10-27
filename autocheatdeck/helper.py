@@ -79,6 +79,21 @@ function Trainer-Window($title) {
 }
 function Find-Trainer($title) { return $auto::FromHandle((Trainer-Window $title)) }
 
+# Cheats are read and matched by name, so always use the trainer in English (FLiNG trainers can be
+# set to Simplified or Traditional Chinese). The language buttons have fixed ids.
+function Use-English($win) {
+    $cond = New-Object Windows.Automation.PropertyCondition $auto::AutomationIdProperty, 'm_radiobutton_eng'
+    try {   # best effort: a trainer without the buttons is read as it is
+        $english = $win.FindFirst($scope::Descendants, $cond)
+        if (-not $english) { return }
+        $item = $english.GetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern)
+        if (-not $item.Current.IsSelected) {
+            $item.Select()
+            Start-Sleep -Milliseconds 400   # the trainer relabels its rows
+        }
+    } catch { }
+}
+
 # Every kind of cheat row (CheatOption, CheatOptionWithInput, CheatOptionSetValue, ...) has an
 # m_toggle_button and an m_label_option_name. Looking them up is slow (a cross-process search per
 # element), so it's done once per trainer window and reused; toggles and state reads then talk to
@@ -88,6 +103,7 @@ function Get-Rows($title, [bool]$refresh) {
     if ($refresh -or -not $entry -or -not [Acd.Native]::IsWindow($entry.hwnd)) {
         $hwnd = Trainer-Window $title
         $win = $auto::FromHandle($hwnd)
+        Use-English $win
         $walker = [Windows.Automation.TreeWalker]::ControlViewWalker
         $idProp = $auto::AutomationIdProperty
         $buttonCond = New-Object Windows.Automation.PropertyCondition $idProp, 'm_toggle_button'
@@ -211,6 +227,7 @@ while ($true) {
             }
             'dump' {
                 $win = Find-Trainer $req.title
+                Use-English $win
                 $all = $win.FindAll($scope::Descendants, [Windows.Automation.Condition]::TrueCondition)
                 $lines = @(foreach ($e in $all) {
                     $n = $e.Current.Name
