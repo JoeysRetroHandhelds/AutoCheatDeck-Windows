@@ -17,6 +17,28 @@ AutoCheatDeck does nothing in the background: no game detection and no timers. W
 
 The whole app works with an Xbox-style controller or the keyboard (arrows, Enter, Esc, Page Up/Down): D-pad or left stick to move, **A** select, **B** back, **Y** find a trainer for the selected game, **X** launch its trainer, **LB/RB** page through the list. Controllers have to be polled, so the controller is only read while an AutoCheatDeck window (or one of its dialogs) has focus: it never reacts to buttons pressed in a game.
 
+### Cheats over the game (Game Bar widget)
+
+The **AutoCheatDeck** widget in Xbox Game Bar (Win+G, or the Xbox / guide button) lets you start a trainer and switch its cheats without leaving the game:
+
+1. Open Game Bar, open **Widgets > AutoCheatDeck**. It lists the games that have a trainer. If AutoCheatDeck isn't running the widget starts it (in the tray), and it quits again a couple of minutes after you stop using it, unless a trainer it started is still running.
+2. Pick the game and press **Launch trainer**. Windows asks once per session for administrator approval: FLiNG trainers run as administrator, so only an administrator helper can start them and press their buttons. The trainer's own window stays hidden.
+3. The first launch of a trainer reads its cheat list (it's remembered until the trainer is updated). Then the **cheat overlay** opens over the game:
+
+| Controller | Keyboard | Does |
+|---|---|---|
+| Up / Down, LB / RB | arrows, Page Up / Down | move, page |
+| **A** | Enter | switch the cheat on / off |
+| **Left / Right** | Left / Right | change a multiplier, speed or option (`‹ 2.0 ›`) |
+| **Y** | | type an amount (money, items) one digit at a time: Up / Down change a digit, Left / Right move, A sets, B cancels |
+| **B** | Esc | close; focus goes back to the game |
+
+**Show cheats** in the widget opens the overlay again. Quitting AutoCheatDeck gives the trainer its window back (minimized), so it can be closed normally.
+
+Games in *exclusive* fullscreen would minimize if the overlay took focus, so over those it opens without focus and works by touch (double-tap a cheat; tap the bottom line to close). To use the controller, set the game's display mode to **Borderless** (most recent games already are).
+
+**Installing the widget.** The widget isn't part of the release zip yet. Build `widget/AutoCheatDeckWidget` in Visual Studio (UWP workload; build `Launcher/AcdLauncher.exe` first with the `csc` line at the top of `Launcher/AcdLauncher.cs`), then trust the signing certificate once (as administrator: import `widget/AutoCheatDeckWidget.cer` into *Local Machine > Trusted People*) and install the package. Game Bar only lists signed widgets. Open AutoCheatDeck on the desktop once afterwards so the widget can find it.
+
 ### Start with Windows
 
 Tick **Start with Windows** to launch AutoCheatDeck into the tray at sign-in. The Xbox full screen experience on handhelds skips ordinary startup apps, so this registers a sign-in task instead, which needs one administrator approval when you tick it (the task itself runs as you, not as admin). Decline it and AutoCheatDeck still starts with Windows on the desktop. Moving the folder or turning the option off needs no further approval.
@@ -25,7 +47,7 @@ Tick **Start with Windows** to launch AutoCheatDeck into the tray at sign-in. Th
 
 **Check for updates** / **Install update** downloads the new version, swaps the app files (your `data` folder is untouched) and restarts; **Restore previous version** swaps back.
 
-Trainers are third-party programs that modify game memory, and Windows Defender often flags them. Only use trainers you trust.
+Trainers are third-party programs that modify game memory, and Windows Defender often flags them. Only use trainers you trust, and only in single-player games: using one in an online game with anti-cheat can get your account banned.
 
 If the controller isn't detected, the status line at the bottom says so, and `data\autocheatdeck.log` records what the app saw (useful when reporting a problem).
 

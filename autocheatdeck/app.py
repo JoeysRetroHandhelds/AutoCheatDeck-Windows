@@ -601,7 +601,9 @@ class App(api.Backend):
                     "AutoCheatDeck",
                     "Windows Defender often flags game trainers because they modify game memory.\n\n"
                     "If the trainer disappears or won't start, check Windows Security > Protection history. "
-                    "Only allow trainers you trust.",
+                    "Only allow trainers you trust.\n\n"
+                    "Use trainers in single-player games only: in an online game with anti-cheat, a trainer "
+                    "can get your account banned.",
                     parent=self.root,
                 )
 
