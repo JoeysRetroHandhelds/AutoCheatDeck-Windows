@@ -4,9 +4,11 @@ Nothing runs on a timer: background threads hand work to the window through a qu
 with a Tk event, and the controller is only read while one of the app's windows is focused.
 """
 
+import json
 import os
 import queue
 import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -14,8 +16,8 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Any, Callable
 
-from . import (__version__, api, cheats, config, defender, fling, helper, library, log, protocol, startup, steam,
-               updater, values)
+from . import (__version__, api, cheats, config, defender, diagnostics, fling, helper, library, log, protocol,
+               startup, steam, updater, values)
 from .winapi import WINDOW_TITLE, listen_for_show
 
 FONT = ("Segoe UI", 12)
@@ -277,6 +279,7 @@ class App(api.Backend):
         self.startup_on = tk.BooleanVar(value=startup.is_enabled())
         ttk.Checkbutton(bottom, text="Start with Windows (in tray)", variable=self.startup_on,
                         command=self._toggle_startup).pack(side="left")
+        ttk.Button(bottom, text="Send logs", command=self.send_logs).pack(side="right")
 
         updates = ttk.Frame(self.root, padding=(12, 0, 12, 8))
         updates.pack(fill="x")
@@ -498,6 +501,12 @@ class App(api.Backend):
         if not parsed["cheats"]:
             raise ValueError("No cheats found in the trainer window yet")
         cheats.save_cache(self._cheat_cache(appid), entry["sha256"], parsed)
+        try:  # the trainer's control tree, for Send logs (how its value boxes etc. look)
+            tree = self.helper.dump_tree(helper.trainer_title(entry["path"]))
+            with open(self._cheat_cache(appid)[:-5] + ".tree.json", "w", encoding="utf-8") as f:
+                json.dump({"trainer": entry.get("title", ""), "tree": tree}, f)
+        except Exception:
+            log.get().exception("cheats: saving the trainer tree failed")
         log.get().info("cheats: read %d cheats for %s", len(parsed["cheats"]), appid)
         return parsed
 
@@ -849,6 +858,33 @@ class App(api.Backend):
                 widget.invoke()
             elif name == "b":
                 self.tree.focus_set()
+
+    # ---------- send logs ----------
+
+    def send_logs(self) -> None:
+        """Save the logs (user name blanked out) as a zip on the Desktop, show it, and offer a
+        pre-filled GitHub issue to attach it to."""
+        info = diagnostics.system_info(__version__, {
+            "scale": self.scale,
+            "screen": "{}x{}".format(self.root.winfo_screenwidth(), self.root.winfo_screenheight()),
+            "controller": self.gamepad.connected if self.gamepad.available else "unavailable",
+            "helperRunning": self.helper.running,
+        })
+        log.get().info("send logs: AutoCheatDeck %s", __version__)
+        try:
+            path = diagnostics.build_zip(diagnostics.default_destination(), config.data_dir(), info)
+        except OSError as e:
+            self.msg.showerror("AutoCheatDeck", "Couldn't save the logs: {}".format(e), parent=self.root)
+            return
+        subprocess.Popen(["explorer.exe", "/select,", path])
+        if self.msg.askyesno(
+                "AutoCheatDeck",
+                "Saved {}\n\nYour Windows user name is blanked out of it. Open a GitHub issue to describe "
+                "the problem and attach the zip? (You can also send the zip another way.)".format(
+                    os.path.basename(path)), parent=self.root):
+            import webbrowser
+
+            webbrowser.open(diagnostics.issue_url(info))
 
     # ---------- app updates ----------
 

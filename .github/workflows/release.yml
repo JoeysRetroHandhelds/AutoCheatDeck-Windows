@@ -29,6 +29,7 @@ jobs:
         run: |
           $version = python -c "import autocheatdeck; print(autocheatdeck.__version__)"
           if ("v$version" -ne "${{ github.ref_name }}") { throw "Tag ${{ github.ref_name }} does not match __version__ $version" }
+          if (-not (Test-Path "docs/releases/${{ github.ref_name }}.md")) { throw "Write docs/releases/${{ github.ref_name }}.md first" }
       - name: Build app folder
         run: python -m PyInstaller --onedir --noconsole --name AutoCheatDeck --clean -y main.py
       - name: Zip and checksum
@@ -53,6 +54,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           name: AutoCheatDeck ${{ github.ref_name }}
+          body_path: docs/releases/${{ github.ref_name }}.md
           generate_release_notes: true
           files: |
             release/AutoCheatDeck-win64.zip
