@@ -43,8 +43,8 @@ class SteamTest(unittest.TestCase):
 
             def add(lib, appid, name, folder, create=True, played=0):
                 with open(os.path.join(lib, "steamapps", "appmanifest_%s.acf" % appid), "w") as f:
-                    f.write('"AppState" { "appid" "%s" "name" "%s" "installdir" "%s" "LastPlayed" "%d" }'
-                            % (appid, name, folder, played))
+                    f.write('"AppState" { "appid" "%s" "name" "%s" "installdir" "%s" "LastPlayed" "%d" '
+                            '"buildid" "1%s" }' % (appid, name, folder, played, appid))
                 if create:
                     os.makedirs(os.path.join(lib, "steamapps", "common", folder))
 
@@ -58,6 +58,7 @@ class SteamTest(unittest.TestCase):
             games = steam.installed_games(steam_dir)
         # Most recently played first, then never-played games alphabetically.
         self.assertEqual([g.name for g in games], ["ELDEN RING", "Hades", "Balatro", "Portal 2"])
+        self.assertEqual(games[1].build, "11145360")  # Steam's build id, for "game updated"
 
 
 @unittest.skipUnless(sys.platform == "win32", "needs Windows")
