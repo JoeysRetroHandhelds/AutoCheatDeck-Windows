@@ -9,7 +9,8 @@ hidden. While the overlay is open a focus guard (Windows' foreground-change noti
 polling) takes focus straight back whenever the trainer grabs it.
 
 Games in exclusive fullscreen would minimize if the overlay took focus, so for those it opens
-without taking focus, and reads the controller while it's open.
+without taking focus. The controller can't drive it then (the game is in front and would get every
+press too), so it says so: touch works, or the game can be switched to borderless.
 """
 
 import ctypes
@@ -27,6 +28,10 @@ ON = "#5fd38a"
 ACCENT = "#2f6fdb"
 
 QUNS_RUNNING_D3D_FULL_SCREEN = 3
+# The controller can't drive the overlay over an exclusive fullscreen game: it would need focus
+# (which minimizes the game), and the game reads every press too. Touch still works.
+EXCLUSIVE_NOTE = ("Exclusive fullscreen: use touch here, or set the game's Display mode to "
+                  "Borderless to use the controller.")
 GWL_EXSTYLE = -20
 WS_EX_NOACTIVATE = 0x08000000
 
@@ -61,7 +66,6 @@ class Overlay:
         self.cheats: list[dict] = []
         self.visible = False
         self.focused_mode = True
-        self._holding = False  # holding the controller open (no-focus mode)
         self._previous = None  # window to give focus back to on close (the game)
         self._guard = None
 
@@ -88,8 +92,10 @@ class Overlay:
         scroll.pack(side="right", fill="y")
         self.list.bind("<Double-Button-1>", lambda _: self.toggle_selected())
 
-        footer = "A / Enter  toggle      B / Esc  close      LB / RB  page"
-        tk.Label(top, text=footer, bg=BG, fg=DIM, font=("Segoe UI", 11), pady=8).pack(fill="x")
+        self.footer = tk.Label(top, text="", bg=BG, fg=DIM, font=("Segoe UI", 11), pady=8)
+        self.footer.pack(fill="x")
+        # B / Esc never reach the overlay in no-focus mode, so tapping the footer closes it too.
+        self.footer.bind("<Button-1>", lambda _: self.close())
 
     # ---------- open / close ----------
 
@@ -117,6 +123,8 @@ class Overlay:
             self._previous = _user32.GetForegroundWindow()
         self.focused_mode = not exclusive_fullscreen()
         self._place()
+        self.footer.configure(text="A / Enter  toggle      B / Esc  close      LB / RB  page" if self.focused_mode
+                              else "Double-tap a cheat to toggle it      Tap here to close")
         self.top.deiconify()
         self.top.lift()
         self.visible = True
@@ -131,20 +139,13 @@ class Overlay:
         hwnd = self._hwnd()
         style = _user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
         if self.focused_mode:
-            if self._holding:
-                self._holding = False
-                self.app.gamepad.release()
             _user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style & ~WS_EX_NOACTIVATE)
             self.take_focus()
             if self._guard is None:
                 self._guard = winapi.ForegroundWatcher(lambda h: self.app.post(lambda: self._on_foreground(h)))
         else:
-            # Exclusive fullscreen: don't take focus (the game would minimize); read the controller
-            # anyway while the overlay is open.
+            # Exclusive fullscreen: don't take focus (the game would minimize). Touch only.
             _user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style | WS_EX_NOACTIVATE)
-            if not self._holding:
-                self._holding = True
-                self.app.gamepad.hold()
 
     def take_focus(self) -> None:
         hwnd = self._hwnd()
@@ -171,9 +172,6 @@ class Overlay:
         if self._guard is not None:
             self._guard.stop()
             self._guard = None
-        if self._holding:
-            self._holding = False
-            self.app.gamepad.release()
         self.top.withdraw()
         if self._previous:
             winapi.force_foreground(self._previous)  # back to the game
@@ -208,7 +206,10 @@ class Overlay:
             self.list.selection_set(index)
             self.list.activate(index)
             self.list.see(index)
-        self.status.configure(text="" if running else "The trainer isn't running. Launch it from the widget.")
+        if not running:
+            self.status.configure(text="The trainer isn't running. Launch it from the widget.")
+        else:
+            self.status.configure(text="" if self.focused_mode else EXCLUSIVE_NOTE)
 
     @staticmethod
     def _label(cheat: dict) -> str:
