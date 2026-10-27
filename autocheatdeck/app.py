@@ -17,7 +17,7 @@ from tkinter import messagebox, ttk
 from typing import Any, Callable
 
 from . import (__version__, api, cheats, config, defender, diagnostics, fling, helper, library, log, protocol,
-               startup, steam, updater, values)
+               startup, steam, updater, values, widget)
 from .winapi import WINDOW_TITLE, listen_for_show
 
 FONT = ("Segoe UI", 12)
@@ -141,6 +141,8 @@ class App(api.Backend):
 
         if self.app_dir:
             updater.cleanup(self.app_dir)
+            self.run_bg(lambda: widget.state(self.app_dir), self._show_widget_button,
+                        on_error=lambda e: log.get().warning("widget: state check failed: %s", e))
         self._refresh_update_controls()
         if self.cfg.data.get("checkUpdates", True):
             self.check_app_update(quiet=True)
@@ -280,6 +282,8 @@ class App(api.Backend):
         ttk.Checkbutton(bottom, text="Start with Windows (in tray)", variable=self.startup_on,
                         command=self._toggle_startup).pack(side="left")
         ttk.Button(bottom, text="Send logs", command=self.send_logs).pack(side="right")
+        # "Install / Update Game Bar widget", shown once we know the widget needs it.
+        self.widget_button = ttk.Button(bottom, text="", command=self.install_widget)
 
         updates = ttk.Frame(self.root, padding=(12, 0, 12, 8))
         updates.pack(fill="x")
@@ -858,6 +862,35 @@ class App(api.Backend):
                 widget.invoke()
             elif name == "b":
                 self.tree.focus_set()
+
+    # ---------- Game Bar widget ----------
+
+    def _show_widget_button(self, state: str) -> None:
+        log.get().info("widget: %s", state or "not bundled")
+        labels = {"install": "Install Game Bar widget", "update": "Update Game Bar widget"}
+        if state in labels:
+            self.widget_button.configure(text=labels[state], state="normal")
+            self.widget_button.pack(side="right", padx=(0, 6))
+        else:
+            self.widget_button.pack_forget()
+
+    def install_widget(self) -> None:
+        self.widget_button.configure(state="disabled")
+
+        def done(_: None) -> None:
+            self.set_status("")
+            self._show_widget_button("current")
+            log.get().info("widget: installed")
+            self.msg.showinfo("AutoCheatDeck", "The Game Bar widget is installed.\n\nOpen Game Bar (Win+G, or the "
+                              "Xbox button) and choose Widgets > AutoCheatDeck. Tip: pin it with the star so it's "
+                              "always there.", parent=self.root)
+
+        def failed(error: Exception) -> None:
+            self.widget_button.configure(state="normal")
+            self._bg_failed(error)
+
+        self.run_bg(lambda: widget.install(self.app_dir), done, "Installing the Game Bar widget...",
+                    on_error=failed)
 
     # ---------- send logs ----------
 
