@@ -32,9 +32,13 @@ class Config:
         self.data = json.loads(json.dumps(DEFAULTS))
         try:
             with open(self.path, encoding="utf-8") as f:
-                self.data.update(json.load(f))
+                saved = json.load(f)
         except (OSError, ValueError):
-            pass
+            saved = None
+        if isinstance(saved, dict):
+            self.data.update(saved)
+        if not isinstance(self.data.get("games"), dict):
+            self.data["games"] = {}
 
     def save(self) -> None:
         with self._lock:

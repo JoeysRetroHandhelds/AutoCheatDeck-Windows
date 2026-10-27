@@ -62,6 +62,8 @@ class App:
         self._events: queue.Queue[Callable[[], None]] = queue.Queue()
         # Updates only apply to the packaged app; None when running from source.
         self.app_dir = config.app_dir() if getattr(sys, "frozen", False) else None
+        self._updating = False
+        self._downloading: set[str] = set()  # games with a trainer download in progress
 
         # Fixed title: a second launch finds this window by it and brings it to the front.
         root.title(WINDOW_TITLE)
@@ -150,7 +152,8 @@ class App:
                 log.get().exception("UI event failed")
                 self.set_status("Error: {}".format(e))
 
-    def run_bg(self, work: Callable[[], Any], done: Callable[[Any], None], status: str = "") -> None:
+    def run_bg(self, work: Callable[[], Any], done: Callable[[Any], None], status: str = "",
+               failed: Callable[[], None] | None = None) -> None:
         if status:
             self.set_status(status)
 
@@ -159,6 +162,8 @@ class App:
                 result = work()
             except Exception as e:  # report every background failure in the UI
                 error = e
+                if failed:
+                    self.post(failed)
                 self.post(lambda: self._bg_failed(error))
                 return
             self.post(lambda: done(result))
@@ -367,6 +372,7 @@ class App:
             return
         folder = os.path.join(config.trainers_dir(), game.appid)
         if os.path.isdir(folder):
+            shutil.rmtree(folder + ".removing", ignore_errors=True)
             try:
                 os.rename(folder, folder + ".removing")
             except OSError:
@@ -400,8 +406,13 @@ class App:
 
     def install_trainer(self, game: steam.Game, page: dict, version: dict) -> None:
         target = os.path.join(config.trainers_dir(), game.appid)
+        if game.appid in self._downloading:
+            self.set_status("Already downloading a trainer for {}".format(game.name))
+            return
+        self._downloading.add(game.appid)
 
         def done(result: dict) -> None:
+            self._downloading.discard(game.appid)
             self.cfg.set_game(game.appid, {
                 "title": version["title"],
                 "pageUrl": page["url"],
@@ -422,7 +433,8 @@ class App:
                 )
 
         self.run_bg(lambda: fling.download(version["url"], page["url"], target), done,
-                    "Downloading {}...".format(version["title"]))
+                    "Downloading {}...".format(version["title"]),
+                    failed=lambda: self._downloading.discard(game.appid))
 
     def check_trainer_update(self, appid: str) -> None:
         entry = self.cfg.game(appid)
@@ -448,6 +460,7 @@ class App:
         if os.path.isdir(folder):
             # Renaming fails while the trainer is running, so nothing is half-deleted.
             doomed = folder + ".removing"
+            shutil.rmtree(doomed, ignore_errors=True)
             try:
                 os.rename(folder, doomed)
             except OSError:
@@ -484,7 +497,8 @@ class App:
                     parent=self.root,
                 )
 
-        self.run_bg(lambda: startup.enable(sys.executable), done, "Setting up Start with Windows...")
+        self.run_bg(lambda: startup.enable(sys.executable), done, "Setting up Start with Windows...",
+                    failed=lambda: self.startup_on.set(startup.is_enabled()))
 
     # ---------- controller ----------
 
@@ -631,13 +645,22 @@ class App:
                 info["latest"], notes[:600]), parent=self.root):
             return
 
+        if self._updating:
+            return
+        self._updating = True
+
         def done(_: str) -> None:
             updater.start_finisher(self.app_dir, os.getpid())
             self.quit()
 
-        self.run_bg(lambda: updater.stage_update(self.app_dir), done, "Downloading update...")
+        def failed() -> None:
+            self._updating = False
+
+        self.run_bg(lambda: updater.stage_update(self.app_dir), done, "Downloading update...", failed=failed)
 
     def rollback(self) -> None:
+        if self._updating:
+            return
         if not self.msg.askyesno("AutoCheatDeck", "Go back to the previous version? AutoCheatDeck will restart.",
                                  parent=self.root):
             return
@@ -659,6 +682,7 @@ class TrainerFinder(tk.Toplevel):
         self.game = game
         self.page: dict | None = None
         self.items: list[dict] = []
+        self._request = 0  # only the latest search / version lookup may update the list
         self.title("Find trainer - {}".format(game.name))
         self.geometry("{}x{}".format(app.px(720), app.px(520)))
         self.transient(app.root)
@@ -711,6 +735,17 @@ class TrainerFinder(tk.Toplevel):
         elif name in ("left", "right") and widget is not None:
             (widget.tk_focusNext() if name == "right" else widget.tk_focusPrev()).focus_set()
 
+    def _latest(self, show: Callable[[Any], None]) -> Callable[[Any], None]:
+        """Wrap a result handler so it is dropped if the window closed or a newer request started."""
+        self._request += 1
+        request = self._request
+
+        def handler(result: Any) -> None:
+            if request == self._request and self.winfo_exists():
+                show(result)
+
+        return handler
+
     def _show(self, heading: str, items: list[dict], empty: str) -> None:
         self.items = items
         self.heading.configure(text=heading)
@@ -730,8 +765,9 @@ class TrainerFinder(tk.Toplevel):
         if not query:
             return
         self.heading.configure(text="Searching FLiNG...")
-        self.app.run_bg(lambda: fling.search(query),
-                        lambda results: self._show("Pick the trainer for your game:", results, "No trainers found"))
+        self.items = []
+        self.app.run_bg(lambda: fling.search(query), self._latest(
+            lambda results: self._show("Pick the trainer for your game:", results, "No trainers found")))
 
     def choose(self) -> None:
         selection = self.listbox.curselection()
@@ -742,12 +778,13 @@ class TrainerFinder(tk.Toplevel):
             self.page = item
             self.back.pack(side="left")
             self.heading.configure(text="Loading versions...")
+            self.items = []
 
             def shown(detail: dict) -> None:
                 updated = " (updated {})".format(detail["lastUpdated"]) if detail["lastUpdated"] else ""
                 self._show("Pick a version" + updated + ":", detail["versions"], "No downloads on this page")
 
-            self.app.run_bg(lambda: fling.list_versions(item["url"]), shown)
+            self.app.run_bg(lambda: fling.list_versions(item["url"]), self._latest(shown))
             return
         if self.app.msg.askyesno(
             "Download trainer?",

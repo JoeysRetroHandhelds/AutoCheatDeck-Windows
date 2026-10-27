@@ -87,17 +87,22 @@ def download(download_url: str, page_url: str, target_dir: str) -> dict:
     _check_url(page_url)
     os.makedirs(os.path.dirname(target_dir), exist_ok=True)
     tmp_path = target_dir + ".part"
-    with _get(download_url, referer=page_url) as response:
-        final_name = urllib.parse.unquote(os.path.basename(urllib.parse.urlparse(response.geturl()).path))
-        digest = hashlib.sha256()
-        size = 0
-        with open(tmp_path, "wb") as out:
-            while chunk := response.read(64 * 1024):
-                size += len(chunk)
-                if size > MAX_DOWNLOAD_BYTES:
-                    raise ValueError("Download too large")
-                digest.update(chunk)
-                out.write(chunk)
+    try:
+        with _get(download_url, referer=page_url) as response:
+            final_name = urllib.parse.unquote(os.path.basename(urllib.parse.urlparse(response.geturl()).path))
+            digest = hashlib.sha256()
+            size = 0
+            with open(tmp_path, "wb") as out:
+                while chunk := response.read(64 * 1024):
+                    size += len(chunk)
+                    if size > MAX_DOWNLOAD_BYTES:
+                        raise ValueError("Download too large")
+                    digest.update(chunk)
+                    out.write(chunk)
+    except BaseException:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        raise
 
     # Set the current trainer aside instead of deleting it: on Windows the rename fails while the
     # trainer is running, and it can be put back if the new download turns out to be unusable.
