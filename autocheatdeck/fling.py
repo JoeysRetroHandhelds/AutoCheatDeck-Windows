@@ -205,7 +205,8 @@ def check_trainer(path: str, folder: str, expected_sha256: str | None) -> str:
     whatever exe a changed config.json points at.
     """
     real, root = os.path.realpath(path), os.path.realpath(folder)
-    if not real.startswith(root + os.sep) or not real.lower().endswith(".exe"):
+    # Windows paths are case-insensitive (c:\ vs C:\ must not refuse a good trainer).
+    if not os.path.normcase(real).startswith(os.path.normcase(root) + os.sep) or not real.lower().endswith(".exe"):
         raise ValueError("The trainer isn't in AutoCheatDeck's trainer folder; reinstall it.")
     actual = file_sha256(real)
     if expected_sha256 and actual != expected_sha256:
