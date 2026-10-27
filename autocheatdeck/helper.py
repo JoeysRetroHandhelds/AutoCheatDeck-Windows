@@ -209,17 +209,22 @@ while ($true) {
                 while ($stack.Count -gt 0) {
                     $item = $stack.Pop(); $e = $item[0]; $depth = $item[1]
                     $c = $e.Current
-                    $patterns = @($e.GetSupportedPatterns() | ForEach-Object { $_.ProgrammaticName -replace 'Identifiers\.Pattern$', '' })
+                    $patterns = @($e.GetSupportedPatterns() | ForEach-Object {
+                        $_.ProgrammaticName -replace 'Identifiers\.Pattern$', '' })
                     $value = ''
                     $vp = $null
-                    if ($e.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern, [ref]$vp)) { $value = $vp.Current.Value }
+                    if ($e.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern, [ref]$vp)) {
+                        $value = $vp.Current.Value
+                    }
                     $type = $c.ControlType.ProgrammaticName -replace '^ControlType\.', ''
                     [void]$rows.Add(@{ depth = $depth; type = $type;
                         cls = $c.ClassName; id = $c.AutomationId; name = $c.Name; patterns = $patterns; value = $value })
                     $children = New-Object System.Collections.ArrayList
                     $child = $walker.GetFirstChild($e)
                     while ($child) { [void]$children.Add($child); $child = $walker.GetNextSibling($child) }
-                    for ($i = $children.Count - 1; $i -ge 0; $i--) { $stack.Push(@($children[$i], ($depth + 1))) }
+                    for ($i = $children.Count - 1; $i -ge 0; $i--) {
+                        $stack.Push(@($children[$i], ($depth + 1)))
+                    }
                 }
                 $res = @{ ok = $true; tree = $rows }
             }

@@ -542,8 +542,10 @@ class App(api.Backend):
 
     def api_overlay(self, appid: str) -> dict:
         self._trainer(appid)  # errors (no trainer) go back to the widget
+        from .overlay import exclusive_fullscreen
+
         self.post(lambda: self.overlay.open(appid))
-        return {"open": True}
+        return {"open": True, "exclusiveFullscreen": exclusive_fullscreen()}
 
     def api_read(self, appid: str) -> dict:
         return {"cheats": self.read_cheats(appid)["cheats"]}

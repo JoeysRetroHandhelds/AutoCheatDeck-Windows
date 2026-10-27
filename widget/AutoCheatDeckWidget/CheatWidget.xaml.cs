@@ -413,8 +413,11 @@ namespace AutoCheatDeckWidget
         {
             try
             {
-                await CallAsync(HttpMethod.Post, GamePath(game, "overlay"));
-                ShowStatus("Cheats are open over the game. B or Esc closes them.");
+                var result = await CallAsync(HttpMethod.Post, GamePath(game, "overlay"));
+                ShowStatus(result.GetNamedBoolean("exclusiveFullscreen", false)
+                    ? "Cheats are open over the game. It's in exclusive fullscreen, so use touch, or set its "
+                      + "Display mode to Borderless to use the controller."
+                    : "Cheats are open over the game. B or Esc closes them.");
             }
             catch (Exception ex)
             {
