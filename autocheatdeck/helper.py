@@ -218,7 +218,8 @@ while ($true) {
                     }
                     $type = $c.ControlType.ProgrammaticName -replace '^ControlType\.', ''
                     [void]$rows.Add(@{ depth = $depth; type = $type;
-                        cls = $c.ClassName; id = $c.AutomationId; name = $c.Name; patterns = $patterns; value = $value })
+                        cls = $c.ClassName; id = $c.AutomationId; name = $c.Name
+                        patterns = $patterns; value = $value })
                     $children = New-Object System.Collections.ArrayList
                     $child = $walker.GetFirstChild($e)
                     while ($child) { [void]$children.Add($child); $child = $walker.GetNextSibling($child) }
