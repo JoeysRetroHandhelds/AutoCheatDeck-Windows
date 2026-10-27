@@ -51,7 +51,7 @@ Tick **Start with Windows** to launch AutoCheatDeck into the tray at sign-in. Th
 
 **Check for updates** / **Install update** downloads the new version, swaps the app files (your `data` folder is untouched) and restarts; **Restore previous version** swaps back.
 
-Trainers are third-party programs that modify game memory, and Windows Defender often flags them. Only use trainers you trust, and only in single-player games: using one in an online game with anti-cheat can get your account banned.
+Trainers are third-party programs that modify game memory, and Windows Defender often flags them. If Windows Security removes a trainer, its game shows **Missing** with buttons to open Protection history (to restore it), download it again or remove it; if it blocks one from starting, AutoCheatDeck says so. AutoCheatDeck never changes Windows Security's settings itself. Only use trainers you trust, and only in single-player games: using one in an online game with anti-cheat can get your account banned.
 
 If the controller isn't detected, the status line at the bottom says so, and `data\autocheatdeck.log` records what the app saw (useful when reporting a problem).
 

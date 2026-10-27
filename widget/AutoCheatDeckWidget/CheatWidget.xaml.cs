@@ -199,13 +199,15 @@ namespace AutoCheatDeckWidget
                     var game = value.GetObject();
                     var running = game.GetNamedBoolean("running", false);
                     var updated = game.GetNamedBoolean("gameUpdated", false);
+                    var missing = game.GetNamedBoolean("missing", false);
                     games.Add(new GameItem
                     {
                         Id = game.GetNamedString("id"),
                         Name = game.GetNamedString("name"),
                         Trainer = game.GetNamedString("trainer"),
                         Detail = game.GetNamedString("source") + (running ? " · trainer running" : "")
-                                 + (updated ? " · game updated: the trainer may need an update" : ""),
+                                 + (updated ? " · game updated: the trainer may need an update" : "")
+                                 + (missing ? " · trainer removed by Windows Security: see AutoCheatDeck" : ""),
                     });
                 }
                 ShowStatus(games.Count == 0 ? "No trainers yet. Find one in AutoCheatDeck on the desktop." : "");

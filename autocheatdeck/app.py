@@ -14,7 +14,8 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Any, Callable
 
-from . import __version__, api, cheats, values, config, fling, helper, library, log, protocol, startup, steam, updater
+from . import (__version__, api, cheats, config, defender, fling, helper, library, log, protocol, startup, steam,
+               updater, values)
 from .winapi import WINDOW_TITLE, listen_for_show
 
 FONT = ("Segoe UI", 12)
@@ -335,6 +336,8 @@ class App(api.Backend):
             mark = ""
             if entry and os.path.isfile(entry.get("path", "")):
                 mark = "Game updated" if library.game_updated(entry, game) else "Ready"
+            elif defender.trainer_missing(entry):
+                mark = "Missing"
             self.tree.insert("", "end", iid=game.appid, text=game.name, values=(game.source, mark))
         if not (selected and self.tree.exists(selected)):
             children = self.tree.get_children()
@@ -382,6 +385,15 @@ class App(api.Backend):
                 ("Check for trainer update", lambda: self.check_trainer_update(game.appid)),
                 ("Find a different trainer", self.find_trainer),
                 ("Open trainer folder", lambda: os.startfile(os.path.dirname(entry["path"]))),
+                ("Remove trainer", lambda: self.remove_trainer(game.appid)),
+            ]
+        elif defender.trainer_missing(entry):
+            ttk.Label(self.detail, text=entry.get("title", ""), wraplength=self.px(360)).pack(anchor="w", pady=(16, 4))
+            ttk.Label(self.detail, text=defender.MISSING, foreground="#b35900", wraplength=self.px(360)).pack(
+                anchor="w", pady=(0, 8))
+            buttons = [
+                ("Open Windows Security", defender.open_protection_history),
+                ("Download again", lambda: self.redownload_trainer(game.appid)),
                 ("Remove trainer", lambda: self.remove_trainer(game.appid)),
             ]
         else:
@@ -444,7 +456,8 @@ class App(api.Backend):
             launch_trainer(path)
         except Exception as e:  # report every launch failure in the UI
             log.get().exception("could not start trainer %s", path)
-            self.msg.showerror("AutoCheatDeck", str(e), parent=self.root)
+            self.msg.showerror("AutoCheatDeck", defender.BLOCKED if defender.blocked(e) else str(e),
+                               parent=self.root)
             return
         log.get().info("started trainer %s", path)
         game = self.by_id.get(appid)
@@ -467,6 +480,8 @@ class App(api.Backend):
 
     def _trainer(self, appid: str) -> dict:
         entry = self.cfg.game(appid)
+        if defender.trainer_missing(entry):
+            raise ValueError(defender.MISSING + " (See AutoCheatDeck on the desktop.)")
         if not entry or not os.path.isfile(entry.get("path", "")):
             raise ValueError("No trainer installed for this game")
         return entry
@@ -523,7 +538,11 @@ class App(api.Backend):
         result = []
         for game in self.games:
             entry = self.cfg.game(game.appid)
-            if entry and os.path.isfile(entry.get("path", "")):
+            if defender.trainer_missing(entry):
+                result.append({"id": game.appid, "name": game.name, "source": game.source,
+                               "trainer": entry.get("title", ""), "hasCheats": False, "running": False,
+                               "gameUpdated": False, "missing": True})
+            elif entry and os.path.isfile(entry.get("path", "")):
                 result.append({"id": game.appid, "name": game.name, "source": game.source,
                                "trainer": entry["title"], "hasCheats": self.cached_cheats(game.appid) is not None,
                                "running": bool(cheats.trainer_window(entry["path"])),
@@ -554,7 +573,12 @@ class App(api.Backend):
                                          entry.get("exeSha256"))
             if not entry.get("exeSha256"):  # installed before fingerprints were recorded
                 self.post(lambda: self.cfg.set_game(appid, dict(entry, exeSha256=actual)))
-            self.helper.launch(entry["path"])  # the helper is elevated: no second prompt for the trainer
+            try:
+                self.helper.launch(entry["path"])  # the helper is elevated: no second prompt for the trainer
+            except helper.HelperError as e:
+                if defender.blocked(e):
+                    raise ValueError(defender.BLOCKED) from e
+                raise
             log.get().info("started trainer %s (via helper)", entry["path"])
             self.post(lambda: self._record_played({appid}, int(time.time())))
         reading = self.cached_cheats(appid) is None
@@ -655,6 +679,25 @@ class App(api.Backend):
                 self.install_trainer(game, {"url": entry["pageUrl"]}, latest)
 
         self.run_bg(lambda: fling.list_versions(entry["pageUrl"]), done, "Checking trainer...")
+
+    def redownload_trainer(self, appid: str) -> None:
+        """Download the same trainer version again (or the newest, if that one is gone)."""
+        entry = self.cfg.game(appid)
+        game = self.by_id.get(appid)
+        if not entry or not game or not entry.get("pageUrl"):
+            self.find_trainer()
+            return
+
+        def done(detail: dict) -> None:
+            self.set_status("")
+            same = [v for v in detail["versions"] if v["title"] == entry.get("title")]
+            version = same[0] if same else (detail["versions"][0] if detail["versions"] else None)
+            if version is None:
+                self.msg.showerror("AutoCheatDeck", "That trainer page has no downloads now.", parent=self.root)
+                return
+            self.install_trainer(game, {"url": entry["pageUrl"]}, version)
+
+        self.run_bg(lambda: fling.list_versions(entry["pageUrl"]), done, "Looking up the trainer...")
 
     def remove_trainer(self, appid: str) -> None:
         if not self.msg.askyesno("AutoCheatDeck", "Remove this game's trainer?", parent=self.root):
