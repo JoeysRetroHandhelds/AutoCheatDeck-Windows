@@ -538,17 +538,7 @@ class App(api.Backend):
         states: dict[str, dict] = {}
         if cheats.trainer_window(entry["path"]):
             states = self.helper.states(helper.trainer_title(entry["path"]))
-        result = []
-        seen: dict[str, int] = {}
-        for cheat in cached["cheats"]:
-            # The nth cheat with this name is the nth trainer row with it (names can repeat).
-            nth = seen.get(cheat["name"], 0)
-            seen[cheat["name"]] = nth + 1
-            rows = states.get(cheat["name"], [])
-            state = rows[nth] if nth < len(rows) else None
-            result.append(dict(cheat, nth=nth, on=state["on"] if state else None, kind=state["kind"] if state else "",
-                               value=state.get("value") if state else None))
-        return result
+        return cheats.with_states(cached["cheats"], states)
 
     def api_launch(self, appid: str) -> dict:
         entry = self._trainer(appid)
