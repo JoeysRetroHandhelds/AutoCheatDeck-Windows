@@ -77,6 +77,10 @@ class App(api.Backend):
         self.scale = max(1.0, root.winfo_fpixels("1i") / 96)
         root.geometry("{}x{}".format(self.px(1000), self.px(640)))
         root.minsize(self.px(760), self.px(480))
+        # Handheld screens (e.g. 1920x1080 at 150% = 1280x720 usable) are barely bigger than the
+        # window: fill them instead of leaving a sliver of desktop around it.
+        if root.winfo_screenwidth() / self.scale <= 1440 or root.winfo_screenheight() / self.scale <= 900:
+            root.state("zoomed")
         root.option_add("*Font", FONT)
         style = ttk.Style(root)
         # "clam" lets the focused control be highlighted clearly, which controller navigation needs.

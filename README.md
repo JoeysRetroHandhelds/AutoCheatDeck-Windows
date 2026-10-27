@@ -35,7 +35,9 @@ The **AutoCheatDeck** widget in Xbox Game Bar (Win+G, or the Xbox / guide button
 
 **Show cheats** in the widget opens the overlay again. Quitting AutoCheatDeck gives the trainer its window back (minimized), so it can be closed normally.
 
-Games in *exclusive* fullscreen would minimize if the overlay took focus, so over those it opens without focus and works by touch (double-tap a cheat; tap the bottom line to close). To use the controller, set the game's display mode to **Borderless** (most recent games already are).
+The overlay also has touch / mouse buttons: double-tap a cheat to switch it, **−** / **+** change its value, **Amount** opens a number pad, **Close** closes.
+
+Games in *exclusive* fullscreen would minimize if the overlay took focus, so over those it opens without focus and works by touch only. To use the controller, set the game's display mode to **Borderless** (most recent games already are).
 
 **Installing the widget.** The widget isn't part of the release zip yet. Build `widget/AutoCheatDeckWidget` in Visual Studio (UWP workload; build `Launcher/AcdLauncher.exe` first with the `csc` line at the top of `Launcher/AcdLauncher.cs`), then trust the signing certificate once (as administrator: import `widget/AutoCheatDeckWidget.cer` into *Local Machine > Trusted People*) and install the package. Game Bar only lists signed widgets. Open AutoCheatDeck on the desktop once afterwards so the widget can find it.
 
