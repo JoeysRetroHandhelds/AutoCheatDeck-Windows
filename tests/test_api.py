@@ -35,6 +35,12 @@ class FakeBackend(api.Backend):
         self.toggled.append(name)
         return {"on": True}
 
+    def api_set_value(self, appid, name, value):
+        from autocheatdeck import values
+
+        self.toggled.append("{}={}".format(name, values.check(value)))
+        return {"value": value}
+
     def api_activity(self):
         self.activity += 1
 
@@ -68,6 +74,13 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(self.request("POST", "/api/games/1/toggle", {"name": "Banana"})[0], 400)
         self.assertEqual(self.backend.toggled, ["Infinite HP"])
         self.assertEqual(self.request("POST", "/api/press", {"key": "Num 1"})[0], 404)  # gone: trainers ignore it
+
+    def test_set_value(self):
+        self.assertEqual(self.request("POST", "/api/games/1/value", {"name": "Edit Money", "value": "5000"}),
+                         (200, {"value": "5000"}))
+        self.assertEqual(self.request("POST", "/api/games/1/value", {"name": "Edit Money", "value": "1; calc"})[0],
+                         400)
+        self.assertEqual(self.backend.toggled, ["Edit Money=5000"])
 
     def test_overlay(self):
         self.assertEqual(self.request("POST", "/api/games/1/overlay"), (200, {"open": True}))

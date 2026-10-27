@@ -14,7 +14,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Any, Callable
 
-from . import __version__, api, cheats, config, fling, helper, library, log, protocol, startup, steam, updater
+from . import __version__, api, cheats, values, config, fling, helper, library, log, protocol, startup, steam, updater
 from .winapi import WINDOW_TITLE, listen_for_show
 
 FONT = ("Segoe UI", 12)
@@ -520,7 +520,8 @@ class App(api.Backend):
         result = []
         for cheat in cached["cheats"]:
             state = states.get(cheat["name"])
-            result.append(dict(cheat, on=state["on"] if state else None, kind=state["kind"] if state else ""))
+            result.append(dict(cheat, on=state["on"] if state else None, kind=state["kind"] if state else "",
+                               value=state.get("value") if state else None))
         return result
 
     def api_launch(self, appid: str) -> dict:
@@ -557,6 +558,14 @@ class App(api.Backend):
         on = self.helper.toggle(helper.trainer_title(entry["path"]), name)
         log.get().info("cheats: %s -> %s", name, "on" if on else "off")
         return {"on": on}
+
+    def api_set_value(self, appid: str, name: str, value: str) -> dict:
+        entry = self._trainer(appid)
+        if not name:
+            raise ValueError("No cheat given")
+        now = self.helper.set_value(helper.trainer_title(entry["path"]), name, values.check(value))
+        log.get().info("cheats: %s = %s", name, now)
+        return {"value": now}
 
     def find_trainer(self) -> None:
         game = self.by_id.get(self.selected_appid() or "")
