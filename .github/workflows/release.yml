@@ -58,3 +58,55 @@ jobs:
             release/AutoCheatDeck-win64.zip
             release/AutoCheatDeck-win64.zip.sha256
             release/AutoCheatDeck-win64.zip.sig
+
+  widget:
+    # The Game Bar widget (UWP). Signed when the WIDGET_SIGNING_PFX secret is set (base64 of the
+    # CN=JoeysRetroHandhelds .pfx, password in WIDGET_SIGNING_PASSWORD): Game Bar only lists
+    # signed widgets, so only a signed bundle is attached to releases.
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v6
+      - uses: microsoft/setup-msbuild@v2
+      - name: Build package
+        shell: pwsh
+        run: >
+          msbuild widget/AutoCheatDeckWidget/AutoCheatDeckWidget.csproj /restore /m /v:minimal
+          /p:Configuration=Release /p:Platform=x64 /p:AppxBundle=Always "/p:AppxBundlePlatforms=x64|arm64"
+          /p:UapAppxPackageBuildMode=SideloadOnly /p:AppxPackageSigningEnabled=false
+          "/p:AppxPackageDir=$env:GITHUB_WORKSPACE\widget-out\\"
+      - name: Sign
+        id: sign
+        shell: pwsh
+        env:
+          PFX: ${{ secrets.WIDGET_SIGNING_PFX }}
+          PFX_PASSWORD: ${{ secrets.WIDGET_SIGNING_PASSWORD }}
+        run: |
+          $bundle = Get-ChildItem widget-out -Recurse -Filter *.msixbundle | Select-Object -First 1
+          if (-not $bundle) { throw "No .msixbundle was produced" }
+          New-Item -ItemType Directory widget-release | Out-Null
+          $out = "widget-release/AutoCheatDeckWidget.msixbundle"
+          Copy-Item $bundle.FullName $out
+          Copy-Item widget/AutoCheatDeckWidget.cer widget-release/
+          if (-not $env:PFX) {
+            Write-Output "::warning::WIDGET_SIGNING_PFX is not set: the widget bundle is unsigned and not released"
+            "signed=false" >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+          [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\widget.pfx", [Convert]::FromBase64String($env:PFX))
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          & $signtool.FullName sign /fd SHA256 /f "$env:RUNNER_TEMP\widget.pfx" /p $env:PFX_PASSWORD $out
+          if ($LASTEXITCODE -ne 0) { throw "signtool failed" }
+          Remove-Item "$env:RUNNER_TEMP\widget.pfx"
+          "signed=true" >> $env:GITHUB_OUTPUT
+      - uses: actions/upload-artifact@v6
+        with:
+          name: AutoCheatDeckWidget
+          path: widget-release/*
+      - name: Attach to release
+        if: github.ref_type == 'tag' && steps.sign.outputs.signed == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            widget-release/AutoCheatDeckWidget.msixbundle
+            widget-release/AutoCheatDeckWidget.cer
