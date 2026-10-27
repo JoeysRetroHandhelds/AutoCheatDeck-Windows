@@ -65,9 +65,46 @@ def parse_trainer_page(page: str) -> dict:
     return {"versions": versions, "lastUpdated": updated.group(1) if updated else None}
 
 
+_SYMBOLS = re.compile(r"[\u2122\u00ae\u00a9]")  # (TM) (R) (C)
+_BRACKETS = re.compile(r"\s*[(\[][^)\]]*[)\]]")
+_EDITION = re.compile(
+    r"[\s:\-\u2013\u2014]*\b(?:(?:Digital\s+)?(?:Definitive|Deluxe|Complete|Ultimate|Gold|Premium|Standard|"
+    r"Enhanced|Anniversary|Special|Collector'?s|Game\s+of\s+the\s+Year|GOTY)(?:\s+Edition)?|GOTY|Edition)\s*$",
+    re.I)
+_SUBTITLE = re.compile(r"\s*(?::|\s[\-\u2013\u2014]\s).*$")
+
+
+def search_queries(name: str) -> list[str]:
+    """What to search FLiNG for, best first: the store's name, then cleaned-up forms of it.
+
+    Store names carry symbols and edition labels FLiNG's titles don't ("DOOM Eternal (TM) -
+    Deluxe Edition"), so a search for the exact name often finds nothing. The last try drops a
+    subtitle, which can match a related game; the user picks from the results anyway.
+    """
+    queries = [name.strip()]
+    cleaned = _BRACKETS.sub("", _SYMBOLS.sub("", name)).replace("\u2019", "'")
+    while True:
+        shorter = _EDITION.sub("", cleaned).strip()
+        if shorter == cleaned or not shorter:
+            break
+        cleaned = shorter
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" -:\u2013\u2014")
+    queries.append(cleaned)
+    queries.append(_SUBTITLE.sub("", cleaned).strip())
+    unique: list[str] = []
+    for query in queries:
+        if query and query.lower() not in (q.lower() for q in unique):
+            unique.append(query)
+    return unique
+
+
 def search(name: str) -> list[dict]:
-    query = urllib.parse.urlencode({"s": name})
-    return parse_search(_fetch_text("{}/?{}".format(BASE_URL, query)))
+    """Search FLiNG, retrying with cleaned-up names until something is found (at most 3 requests)."""
+    for query in search_queries(name):
+        results = parse_search(_fetch_text("{}/?{}".format(BASE_URL, urllib.parse.urlencode({"s": query}))))
+        if results:
+            return results
+    return []
 
 
 def list_versions(page_url: str) -> dict:

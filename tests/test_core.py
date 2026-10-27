@@ -83,6 +83,34 @@ class FlingTest(unittest.TestCase):
         page = fling.parse_trainer_page(read_fixture("fling_trainer.html"))
         self.assertEqual(page["versions"][0]["title"], "Elden.Ring.v1.02-v1.16.1.Plus.35.Trainer-FLiNG")
 
+    def test_search_queries_clean_up_store_names(self):
+        cases = {
+            "Hades": ["Hades"],
+            "DOOM Eternal\u2122": ["DOOM Eternal\u2122", "DOOM Eternal"],
+            "The Witcher\u00ae 3: Wild Hunt - Game of the Year Edition":
+                ["The Witcher\u00ae 3: Wild Hunt - Game of the Year Edition", "The Witcher 3: Wild Hunt",
+                 "The Witcher 3"],
+            "Assassin's Creed\u00ae Odyssey (Deluxe Edition)":
+                ["Assassin's Creed\u00ae Odyssey (Deluxe Edition)", "Assassin's Creed Odyssey"],
+            "Marvel\u2019s Spider-Man Remastered":
+                ["Marvel\u2019s Spider-Man Remastered", "Marvel's Spider-Man Remastered"],
+            "Special Forces": ["Special Forces"],
+        }
+        for name, expected in cases.items():
+            self.assertEqual(fling.search_queries(name), expected, name)
+
+    def test_search_retries_with_cleaner_names_until_found(self):
+        hit = read_fixture("fling_search.html")
+        asked = []
+
+        def fetch(url):
+            asked.append(url)
+            return hit if "Cyberpunk+2077&" in url + "&" else "<html></html>"
+
+        with mock.patch.object(fling, "_fetch_text", side_effect=fetch):
+            self.assertTrue(fling.search("Cyberpunk 2077: Ultimate Edition"))
+        self.assertEqual(len(asked), 2)
+
 
 class FakeResponse(io.BytesIO):
     def __init__(self, data: bytes, url: str):

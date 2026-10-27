@@ -518,9 +518,14 @@ class App(api.Backend):
         if cheats.trainer_window(entry["path"]):
             states = self.helper.states(helper.trainer_title(entry["path"]))
         result = []
+        seen: dict[str, int] = {}
         for cheat in cached["cheats"]:
-            state = states.get(cheat["name"])
-            result.append(dict(cheat, on=state["on"] if state else None, kind=state["kind"] if state else "",
+            # The nth cheat with this name is the nth trainer row with it (names can repeat).
+            nth = seen.get(cheat["name"], 0)
+            seen[cheat["name"]] = nth + 1
+            rows = states.get(cheat["name"], [])
+            state = rows[nth] if nth < len(rows) else None
+            result.append(dict(cheat, nth=nth, on=state["on"] if state else None, kind=state["kind"] if state else "",
                                value=state.get("value") if state else None))
         return result
 
@@ -551,19 +556,19 @@ class App(api.Backend):
     def api_read(self, appid: str) -> dict:
         return {"cheats": self.read_cheats(appid)["cheats"]}
 
-    def api_toggle(self, appid: str, name: str) -> dict:
+    def api_toggle(self, appid: str, name: str, nth: int = 0) -> dict:
         entry = self._trainer(appid)
         if not name:
             raise ValueError("No cheat given")
-        on = self.helper.toggle(helper.trainer_title(entry["path"]), name)
+        on = self.helper.toggle(helper.trainer_title(entry["path"]), name, nth)
         log.get().info("cheats: %s -> %s", name, "on" if on else "off")
         return {"on": on}
 
-    def api_set_value(self, appid: str, name: str, value: str) -> dict:
+    def api_set_value(self, appid: str, name: str, value: str, nth: int = 0) -> dict:
         entry = self._trainer(appid)
         if not name:
             raise ValueError("No cheat given")
-        now = self.helper.set_value(helper.trainer_title(entry["path"]), name, values.check(value))
+        now = self.helper.set_value(helper.trainer_title(entry["path"]), name, values.check(value), nth)
         log.get().info("cheats: %s = %s", name, now)
         return {"value": now}
 

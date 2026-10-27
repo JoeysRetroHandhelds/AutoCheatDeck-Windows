@@ -29,13 +29,13 @@ class FakeBackend(api.Backend):
     def api_read(self, appid):
         return {"cheats": []}
 
-    def api_toggle(self, appid, name):
+    def api_toggle(self, appid, name, nth=0):
         if name != "Infinite HP":
             raise ValueError("No cheat named " + name)
-        self.toggled.append(name)
+        self.toggled.append(name if nth == 0 else "{} #{}".format(name, nth))
         return {"on": True}
 
-    def api_set_value(self, appid, name, value):
+    def api_set_value(self, appid, name, value, nth=0):
         from autocheatdeck import values
 
         self.toggled.append("{}={}".format(name, values.check(value)))
@@ -81,6 +81,12 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(self.request("POST", "/api/games/1/value", {"name": "Edit Money", "value": "1; calc"})[0],
                          400)
         self.assertEqual(self.backend.toggled, ["Edit Money=5000"])
+
+    def test_nth_picks_between_cheats_sharing_a_name(self):
+        self.request("POST", "/api/games/1/toggle", {"name": "Infinite HP", "nth": 1})
+        for bad in (-1, "1", True, 5000):
+            self.assertEqual(self.request("POST", "/api/games/1/toggle", {"name": "Infinite HP", "nth": bad})[0], 400)
+        self.assertEqual(self.backend.toggled, ["Infinite HP #1"])
 
     def test_overlay(self):
         self.assertEqual(self.request("POST", "/api/games/1/overlay"), (200, {"open": True}))
