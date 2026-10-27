@@ -664,13 +664,17 @@ class App:
         if not self.msg.askyesno("AutoCheatDeck", "Go back to the previous version? AutoCheatDeck will restart.",
                                  parent=self.root):
             return
-        try:
-            updater.stage_rollback(self.app_dir)
-        except (OSError, ValueError) as e:
-            self.msg.showerror("AutoCheatDeck", str(e), parent=self.root)
-            return
-        updater.start_finisher(self.app_dir, os.getpid())
-        self.quit()
+        self._updating = True
+
+        def done(_: None) -> None:
+            updater.start_finisher(self.app_dir, os.getpid())
+            self.quit()
+
+        def failed() -> None:
+            self._updating = False
+
+        self.run_bg(lambda: updater.stage_rollback(self.app_dir), done, "Preparing the previous version...",
+                    failed=failed)
 
 
 class TrainerFinder(tk.Toplevel):

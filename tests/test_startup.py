@@ -1,10 +1,14 @@
 import base64
 import os
+import sys
 import tempfile
 import unittest
 from unittest import mock
 
-from autocheatdeck import startup
+if sys.platform != "win32":
+    raise unittest.SkipTest("startup uses the Windows registry")
+
+from autocheatdeck import startup  # noqa: E402
 
 OLD_EXE = r"C:\A\AutoCheatDeck.exe"
 NEW_EXE = r"D:\B\AutoCheatDeck.exe"

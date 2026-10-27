@@ -5,6 +5,7 @@ settings and trainers carry over; the others are prefixed with their store.
 """
 
 import hashlib
+import ntpath
 import os
 import re
 import string
@@ -76,7 +77,8 @@ def xbox_games(drive_roots: list[str] | None = None) -> list[Game]:
 # ---------- manual ----------
 
 def manual_id(folder: str) -> str:
-    digest = hashlib.sha1(os.path.normcase(os.path.normpath(folder)).encode("utf-8")).hexdigest()[:12]
+    # Windows path rules on purpose, so the id doesn't depend on where it is computed.
+    digest = hashlib.sha1(ntpath.normcase(ntpath.normpath(folder)).encode("utf-8")).hexdigest()[:12]
     return "manual-" + digest
 
 

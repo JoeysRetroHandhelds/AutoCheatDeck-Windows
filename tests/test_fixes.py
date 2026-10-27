@@ -1,10 +1,15 @@
 import io
 import os
+import sys
 import tempfile
 import unittest
 from unittest import mock
 
-from autocheatdeck import fling, gamepad, steam
+from autocheatdeck import fling, steam
+
+WINDOWS = sys.platform == "win32"
+if WINDOWS:
+    from autocheatdeck import gamepad
 
 
 class VdfEscapeTest(unittest.TestCase):
@@ -62,6 +67,7 @@ class SafeReplaceTest(unittest.TestCase):
         self.assertEqual(sorted(os.listdir(os.path.dirname(self.target))), ["1"])
 
 
+@unittest.skipUnless(WINDOWS, "gamepad uses XInput")
 class GamepadFocusTest(unittest.TestCase):
     def make(self):
         with mock.patch.object(gamepad, "_load_xinput", return_value=None):  # no polling thread
@@ -90,6 +96,7 @@ class GamepadFocusTest(unittest.TestCase):
         self.assertTrue(pad._wanted.is_set() and pad._stop.is_set())
 
 
+@unittest.skipUnless(WINDOWS, "gamepad uses XInput")
 class GamepadTest(unittest.TestCase):
     def test_stick_acts_as_dpad(self):
         self.assertEqual(gamepad.pressed_names(0x1000, 0, 30000), {"a", "up"})
