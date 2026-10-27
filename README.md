@@ -53,7 +53,9 @@ Tick **Start with Windows** to launch AutoCheatDeck into the tray at sign-in. Th
 
 Trainers are third-party programs that modify game memory, and Windows Defender often flags them. If Windows Security removes a trainer, its game shows **Missing** with buttons to open Protection history (to restore it), download it again or remove it; if it blocks one from starting, AutoCheatDeck says so. AutoCheatDeck never changes Windows Security's settings itself. Only use trainers you trust, and only in single-player games: using one in an online game with anti-cheat can get your account banned.
 
-If the controller isn't detected, the status line at the bottom says so, and `data\autocheatdeck.log` records what the app saw (useful when reporting a problem).
+If the controller isn't detected, the status line at the bottom says so, and `data\autocheatdeck.log` records what the app saw.
+
+**Reporting a problem:** press **Send logs**. It saves a zip on your Desktop with the logs, settings and the cheat lists AutoCheatDeck read (your Windows user name is blanked out of all of them) and offers to open a GitHub issue you can attach it to.
 
 ## Develop
 
@@ -64,4 +66,4 @@ python -m unittest discover -s tests -t .
 python -m PyInstaller --onedir --noconsole --name AutoCheatDeck main.py
 ```
 
-Pushing a `vX.Y.Z` tag that matches `autocheatdeck/__init__.py` builds and publishes a release.
+Releasing: write `docs/releases/vX.Y.Z.md` (the release notes users read), set `autocheatdeck/__init__.py` to the same version, then push a `vX.Y.Z` tag. CI builds, signs and publishes the release. Signing needs these repository secrets: `RELEASE_SIGNING_KEY` (app updates; a tag build fails without it) and `WIDGET_SIGNING_PFX` + `WIDGET_SIGNING_PASSWORD` (the Game Bar widget; without them it's left out of the release).
