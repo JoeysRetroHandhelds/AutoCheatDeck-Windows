@@ -75,6 +75,25 @@ def trainer_window_by_title(title: str) -> int:
     return _user32.FindWindowW(None, title) or 0
 
 
+def with_states(cheat_list: list[dict], states: dict[str, list[dict]]) -> list[dict]:
+    """The cached cheats with the running trainer's live state (helper.states()) added to each.
+
+    The nth cheat with a name is the nth trainer row with that name (names can repeat in different
+    sections), and gets "nth" so toggles and value changes reach that row. Cheats the trainer
+    doesn't show (or every cheat, when it isn't running: states == {}) get on=None.
+    """
+    result = []
+    seen: dict[str, int] = {}
+    for cheat in cheat_list:
+        nth = seen.get(cheat["name"], 0)
+        seen[cheat["name"]] = nth + 1
+        rows = states.get(cheat["name"], [])
+        state = rows[nth] if nth < len(rows) else None
+        result.append(dict(cheat, nth=nth, on=state["on"] if state else None, kind=state["kind"] if state else "",
+                           value=state.get("value") if state else None))
+    return result
+
+
 def save_cache(path: str, sha256: str, parsed: dict) -> None:
     with open(path, "w", encoding="utf-8") as f:
         json.dump({"sha256": sha256, **parsed}, f, indent=2)
