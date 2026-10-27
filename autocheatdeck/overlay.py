@@ -180,7 +180,8 @@ class Overlay:
         self.list.focus_set()
         if self.app.helper.running:
             # The helper (admin) can also take focus from an admin window, e.g. the trainer.
-            self.app.run_bg(lambda: self.app.helper.focus(hwnd), lambda _: self.list.focus_set())
+            self.app.run_bg(lambda: self.app.helper.focus(hwnd), lambda _: self.list.focus_set(),
+                            on_error=self._error)
 
     def _on_foreground(self, hwnd) -> None:
         """Focus guard: the trainer grabbed focus (it does on launch and some toggles): take it back.
@@ -189,7 +190,8 @@ class Overlay:
         if self.visible and self.focused_mode and hwnd and window_title(hwnd) == self.trainer_title:
             log.get().info("overlay: trainer took focus, taking it back")
             target = self._hwnd()
-            self.app.run_bg(lambda: self.app.helper.focus(target), lambda _: self.list.focus_set())
+            self.app.run_bg(lambda: self.app.helper.focus(target), lambda _: self.list.focus_set(),
+                            on_error=self._error)
 
     def close(self) -> None:
         if not self.visible:
@@ -217,7 +219,7 @@ class Overlay:
                 return
             self.show(cheat_list)
 
-        self.app.run_bg(lambda: self.app.api_cheats(appid), done)
+        self.app.run_bg(lambda: self.app.api_cheats(appid), done, on_error=self._error)
 
     def show(self, cheat_list: list[dict]) -> None:
         selected = self.list.curselection()
@@ -249,6 +251,20 @@ class Overlay:
         section = "   ({})".format(cheat["section"]) if cheat.get("section") else ""
         return "  {}    {}{}{}".format(state, cheat["name"], shown, section)
 
+    def _error(self, error: Exception) -> None:
+        log.get().warning("overlay: %s", error)
+        self.status.configure(text="Error: {}".format(error))
+
+    def _can_type(self, cheat: dict) -> bool:
+        if cheat.get("on") is None:
+            self.status.configure(text="The trainer isn't running.")
+            return False
+        # Some rows of an amount kind keep their box hidden (no value): nothing to type there.
+        if values.kind_of(cheat.get("kind", "")) != "type" or cheat.get("value") in (None, ""):
+            self.status.configure(text="This cheat has no amount to type.")
+            return False
+        return True
+
     def _selected(self) -> tuple[int, dict] | None:
         selection = self.list.curselection()
         if not selection or not self.cheats or selection[0] >= len(self.cheats):
@@ -274,7 +290,12 @@ class Overlay:
             self._update_row(index, dict(self.cheats[index], value=result["value"]))
             self.status.configure(text="{} set to {}".format(cheat["name"], result["value"]))
 
-        self.app.run_bg(lambda: self.app.api_set_value(appid, cheat["name"], value, cheat.get("nth", 0)), done)
+        def failed(error: Exception) -> None:
+            self._error(error)
+            self.refresh()  # show what the trainer really holds (a step may already be on screen)
+
+        self.app.run_bg(lambda: self.app.api_set_value(appid, cheat["name"], value, cheat.get("nth", 0)), done,
+                        on_error=failed)
 
     def step_selected(self, direction: int) -> None:
         picked = self._selected()
@@ -292,9 +313,7 @@ class Overlay:
         if not picked:
             return
         index, cheat = picked
-        # Some rows of an amount kind keep their box hidden (no value): nothing to type there.
-        if values.kind_of(cheat.get("kind", "")) != "type" or cheat.get("value") in (None, ""):
-            self.status.configure(text="This cheat has no amount to type.")
+        if not self._can_type(cheat):
             return
         self.editor = values.DigitEditor(str(cheat.get("value") or "0"))
         self._editing = index
@@ -318,8 +337,7 @@ class Overlay:
         if not picked:
             return
         index, cheat = picked
-        if values.kind_of(cheat.get("kind", "")) != "type" or cheat.get("value") in (None, ""):
-            self.status.configure(text="This cheat has no amount to type.")
+        if not self._can_type(cheat):
             return
         self._stop_editing()
         self._editing = index
@@ -382,7 +400,8 @@ class Overlay:
             self._update_row(index, dict(self.cheats[index], on=result["on"]))
             self.status.configure(text="{} is {}".format(cheat["name"], "on" if result["on"] else "off"))
 
-        self.app.run_bg(lambda: self.app.api_toggle(appid, cheat["name"], cheat.get("nth", 0)), done)
+        self.app.run_bg(lambda: self.app.api_toggle(appid, cheat["name"], cheat.get("nth", 0)), done,
+                        on_error=self._error)
 
     # ---------- controller / keyboard ----------
 

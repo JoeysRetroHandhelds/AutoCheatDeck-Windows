@@ -253,7 +253,8 @@ namespace AutoCheatDeckWidget
                 notes.Add(section);
             }
             var kind = cheat.GetNamedString("kind", "");
-            var value = cheat.GetNamedValue("value");
+            // GetNamedValue without a default throws when the key is missing (an older AutoCheatDeck).
+            var value = cheat.GetNamedValue("value", JsonValue.CreateNullValue());
             var shown = value.ValueType == JsonValueType.String ? value.GetString() : "";
             if (kind.StartsWith("CheatOptionWithInputAdjustment") || kind == "CheatOptionSetComboBox")
             {
@@ -263,7 +264,7 @@ namespace AutoCheatDeckWidget
             {
                 notes.Add((shown != "" ? shown + " · " : "") + "type an amount with Y in the overlay");
             }
-            var on = cheat.GetNamedValue("on");
+            var on = cheat.GetNamedValue("on", JsonValue.CreateNullValue());
             return new CheatItem
             {
                 Key = cheat.GetNamedString("key"),

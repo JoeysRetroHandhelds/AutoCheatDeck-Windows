@@ -79,7 +79,9 @@ class App(api.Backend):
         root.minsize(self.px(760), self.px(480))
         # Handheld screens (e.g. 1920x1080 at 150% = 1280x720 usable) are barely bigger than the
         # window: fill them instead of leaving a sliver of desktop around it.
-        if root.winfo_screenwidth() / self.scale <= 1440 or root.winfo_screenheight() / self.scale <= 900:
+        self._fill_screen = (root.winfo_screenwidth() / self.scale <= 1440
+                             or root.winfo_screenheight() / self.scale <= 900)
+        if self._fill_screen and not background:  # zooming shows the window: not while starting hidden
             root.state("zoomed")
         root.option_add("*Font", FONT)
         style = ttk.Style(root)
@@ -175,7 +177,10 @@ class App(api.Backend):
                 self.set_status("Error: {}".format(e))
 
     def run_bg(self, work: Callable[[], Any], done: Callable[[Any], None], status: str = "",
-               failed: Callable[[], None] | None = None) -> None:
+               failed: Callable[[], None] | None = None,
+               on_error: Callable[[Exception], None] | None = None) -> None:
+        """Run work() on a thread, then done(result) on the Tk thread. On an exception: failed(),
+        then on_error(e) if given, else an error dialog."""
         if status:
             self.set_status(status)
 
@@ -186,7 +191,7 @@ class App(api.Backend):
                 error = e
                 if failed:
                     self.post(failed)
-                self.post(lambda: self._bg_failed(error))
+                self.post(lambda: (on_error or self._bg_failed)(error))
                 return
             self.post(lambda: done(result))
 
@@ -215,6 +220,8 @@ class App(api.Backend):
     def show_window(self) -> None:
         self._stop_idle_quit()  # the user is here: stay like a normal start
         self._set_hidden(False)
+        if self._fill_screen and self.root.state() != "zoomed":
+            self.root.state("zoomed")
         self.root.deiconify()
         self.root.lift()
         self.root.focus_force()
