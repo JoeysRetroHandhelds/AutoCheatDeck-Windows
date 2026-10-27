@@ -197,6 +197,32 @@ while ($true) {
                 })
                 $res = @{ ok = $true; lines = $lines }
             }
+            'dump-tree' {
+                # The whole control tree with each element's depth, type, class, AutomationId,
+                # name, supported patterns and (for value boxes) current value: enough to find the
+                # internal IDs of every control in a cheat row (buttons, number boxes, Apply).
+                $win = Find-Trainer $req.title
+                $walker = [Windows.Automation.TreeWalker]::ControlViewWalker
+                $rows = New-Object System.Collections.ArrayList
+                $stack = New-Object System.Collections.Stack
+                $stack.Push(@($win, 0))
+                while ($stack.Count -gt 0) {
+                    $item = $stack.Pop(); $e = $item[0]; $depth = $item[1]
+                    $c = $e.Current
+                    $patterns = @($e.GetSupportedPatterns() | ForEach-Object { $_.ProgrammaticName -replace 'Identifiers\.Pattern$', '' })
+                    $value = ''
+                    $vp = $null
+                    if ($e.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern, [ref]$vp)) { $value = $vp.Current.Value }
+                    $type = $c.ControlType.ProgrammaticName -replace '^ControlType\.', ''
+                    [void]$rows.Add(@{ depth = $depth; type = $type;
+                        cls = $c.ClassName; id = $c.AutomationId; name = $c.Name; patterns = $patterns; value = $value })
+                    $children = New-Object System.Collections.ArrayList
+                    $child = $walker.GetFirstChild($e)
+                    while ($child) { [void]$children.Add($child); $child = $walker.GetNextSibling($child) }
+                    for ($i = $children.Count - 1; $i -ge 0; $i--) { $stack.Push(@($children[$i], ($depth + 1))) }
+                }
+                $res = @{ ok = $true; tree = $rows }
+            }
             'states' {
                 # A trainer restart or a stale element: rebuild the cache once and retry.
                 try { $states = Read-States $req.title $false } catch { $states = Read-States $req.title $true }
@@ -342,6 +368,10 @@ class Helper:
 
     def dump(self, trainer_title: str) -> list[str]:
         return list(self.request("dump", title=trainer_title).get("lines") or [])
+
+    def dump_tree(self, trainer_title: str) -> list[dict]:
+        """Every control in the trainer window, in order: depth, type, cls, id, name, patterns, value."""
+        return list(self.request("dump-tree", title=trainer_title).get("tree") or [])
 
     def states(self, trainer_title: str) -> dict[str, dict]:
         """{cheat name: {"on": bool, "kind": row class}} for every cheat row the trainer shows."""
