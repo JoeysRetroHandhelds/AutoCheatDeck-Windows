@@ -6,7 +6,6 @@ C:\\Users\\<name>\\... don't identify them.
 """
 
 import datetime
-import glob
 import json
 import os
 import platform
@@ -50,11 +49,7 @@ def files_to_include(data_dir: str) -> dict[str, str]:
         "autocheatdeck.log": os.path.join(data_dir, "autocheatdeck.log"),
         "autocheatdeck.log.1": os.path.join(data_dir, "autocheatdeck.log.1"),
         "config.json": os.path.join(data_dir, "config.json"),
-        # The widget's launcher writes here (packaged processes can't reach the data folder).
-        "widget-launcher.log": os.path.join(os.path.expanduser("~"), "AutoCheatDeck-launcher.log"),
     }
-    for path in glob.glob(os.path.join(data_dir, "cheats", "*.json")):
-        candidates["cheats/" + os.path.basename(path)] = path
     return {name: path for name, path in candidates.items() if os.path.isfile(path)}
 
 

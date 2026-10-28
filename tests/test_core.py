@@ -84,27 +84,6 @@ class FlingTest(unittest.TestCase):
         page = fling.parse_trainer_page(read_fixture("fling_trainer.html"))
         self.assertEqual(page["versions"][0]["title"], "Elden.Ring.v1.02-v1.16.1.Plus.35.Trainer-FLiNG")
 
-    def test_check_trainer_before_an_admin_launch(self):
-        with tempfile.TemporaryDirectory() as root:
-            folder = os.path.join(root, "trainers", "1")
-            os.makedirs(folder)
-            exe = os.path.join(folder, "Game Trainer.exe")
-            with open(exe, "wb") as f:
-                f.write(b"MZ trainer")
-            digest = fling.file_sha256(exe)
-            self.assertEqual(fling.check_trainer(exe, folder, digest), digest)
-            self.assertEqual(fling.check_trainer(exe, folder, None), digest)  # nothing recorded yet
-            with open(exe, "ab") as f:
-                f.write(b" swapped")
-            with self.assertRaisesRegex(ValueError, "changed"):
-                fling.check_trainer(exe, folder, digest)
-            outside = os.path.join(root, "evil.exe")
-            with open(outside, "wb") as f:
-                f.write(b"MZ")
-            for path in (outside, os.path.join(folder, "..", "..", "evil.exe")):
-                with self.assertRaisesRegex(ValueError, "folder"):
-                    fling.check_trainer(path, folder, None)
-
     def test_search_queries_clean_up_store_names(self):
         cases = {
             "Hades": ["Hades"],

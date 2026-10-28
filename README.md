@@ -17,33 +17,9 @@ AutoCheatDeck does nothing in the background: no game detection and no timers. W
 
 The whole app works with an Xbox-style controller or the keyboard (arrows, Enter, Esc, Page Up/Down): D-pad or left stick to move, **A** select, **B** back, **Y** find a trainer for the selected game, **X** launch its trainer, **LB/RB** page through the list. Controllers have to be polled, so the controller is only read while an AutoCheatDeck window (or one of its dialogs) has focus: it never reacts to buttons pressed in a game.
 
-### Cheats over the game (Game Bar widget)
+### Using the trainer
 
-The **AutoCheatDeck** widget in Xbox Game Bar (Win+G, or the Xbox / guide button) lets you start a trainer and switch its cheats without leaving the game:
-
-1. Open Game Bar, open **Widgets > AutoCheatDeck**. It lists the games that have a trainer. If AutoCheatDeck isn't running the widget starts it (in the tray), and it quits again a couple of minutes after you stop using it, unless a trainer it started is still running.
-2. Pick the game and press **Launch trainer**. Windows asks once per session for administrator approval: FLiNG trainers run as administrator, so only an administrator helper can start them and press their buttons. The trainer's own window stays hidden.
-3. The first launch of a trainer reads its cheat list (it's remembered until the trainer is updated). Then the **cheat overlay** opens over the game:
-
-| Controller | Keyboard | Does |
-|---|---|---|
-| Up / Down, LB / RB | arrows, Page Up / Down | move, page |
-| **A** | Enter | switch the cheat on / off |
-| **Left / Right** | Left / Right | change a multiplier, speed or option (`‹ 2.0 ›`) |
-| **Y** | | type an amount (money, items) one digit at a time: Up / Down change a digit, Left / Right move, A sets, B cancels |
-| **B** | Esc | close; focus goes back to the game |
-
-**Show cheats** in the widget opens the overlay again. Quitting AutoCheatDeck gives the trainer its window back (minimized), so it can be closed normally.
-
-The overlay also has touch / mouse buttons: double-tap a cheat to switch it, **−** / **+** change its value, **Amount** opens a number pad, **Close** closes.
-
-Games in *exclusive* fullscreen would minimize if the overlay took focus, so over those it opens without focus and works by touch only. To use the controller, set the game's display mode to **Borderless** (most recent games already are).
-
-**Installing the widget.** Press **Install Game Bar widget** at the bottom of AutoCheatDeck's window and approve the one administrator prompt (Windows has to trust the widget's signing certificate; that's asked only once). Then open Game Bar and choose **Widgets > AutoCheatDeck**. When an AutoCheatDeck update brings a newer widget, the button says **Update Game Bar widget**.
-
-To install it by hand instead: download `AutoCheatDeckWidget.msixbundle` and `AutoCheatDeckWidget.cer` from the release, import the `.cer` into *Local Machine > Trusted People* as administrator, then open the bundle.
-
-To build it yourself, open `widget/AutoCheatDeckWidget` in Visual Studio with the UWP workload (the full-trust launcher is compiled automatically) and sign the package with your own certificate.
+Once a trainer is running, use it as FLiNG intends: its own window, or its hotkeys (usually the number pad, shown next to each cheat). Older versions (2.1.x) had a Game Bar widget and a cheat overlay; FLiNG trainers only accept real clicks and keypresses, so switching cheats from outside the trainer couldn't be done reliably and was removed in 2.2.0. Updating from 2.1.x removes the old widget, and asks once for administrator approval to remove its certificate and network exemption too.
 
 ### Start with Windows
 
@@ -57,7 +33,7 @@ Trainers are third-party programs that modify game memory, and Windows Defender 
 
 If the controller isn't detected, the status line at the bottom says so, and `data\autocheatdeck.log` records what the app saw.
 
-**Reporting a problem:** press **Send logs**. It saves a zip on your Desktop with the logs, settings and the cheat lists AutoCheatDeck read (your Windows user name is blanked out of all of them) and offers to open a GitHub issue you can attach it to.
+**Reporting a problem:** press **Send logs**. It saves a zip on your Desktop with the logs and settings (your Windows user name is blanked out of all of them) and offers to open a GitHub issue you can attach it to.
 
 ## Develop
 
@@ -68,4 +44,4 @@ python -m unittest discover -s tests -t .
 python -m PyInstaller --onedir --noconsole --name AutoCheatDeck main.py
 ```
 
-Releasing: write `docs/releases/vX.Y.Z.md` (the release notes users read), set `autocheatdeck/__init__.py` to the same version, then push a `vX.Y.Z` tag. CI builds, signs and publishes the release. Signing needs these repository secrets: `RELEASE_SIGNING_KEY` (app updates; a tag build fails without it) and `WIDGET_SIGNING_PFX` + `WIDGET_SIGNING_PASSWORD` (the Game Bar widget; without them it's left out of the release).
+Releasing: write `docs/releases/vX.Y.Z.md` (the release notes users read), set `autocheatdeck/__init__.py` to the same version, then push a `vX.Y.Z` tag. CI builds, signs and publishes the release. Signing needs the `RELEASE_SIGNING_KEY` repository secret (a tag build fails without it).
