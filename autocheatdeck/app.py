@@ -141,7 +141,8 @@ class App(api.Backend):
 
         if self.app_dir:
             updater.cleanup(self.app_dir)
-            self.run_bg(lambda: widget.state(self.app_dir), self._show_widget_button,
+            setup_done = self.cfg.data.get("widgetSetup") == widget.PACKAGE_FAMILY
+            self.run_bg(lambda: widget.state(self.app_dir, setup_done), self._show_widget_button,
                         on_error=lambda e: log.get().warning("widget: state check failed: %s", e))
         self._refresh_update_controls()
         if self.cfg.data.get("checkUpdates", True):
@@ -867,7 +868,8 @@ class App(api.Backend):
 
     def _show_widget_button(self, state: str) -> None:
         log.get().info("widget: %s", state or "not bundled")
-        labels = {"install": "Install Game Bar widget", "update": "Update Game Bar widget"}
+        labels = {"install": "Install Game Bar widget", "update": "Update Game Bar widget",
+                  "setup": "Finish Game Bar widget setup"}
         if state in labels:
             self.widget_button.configure(text=labels[state], state="normal")
             self.widget_button.pack(side="right", padx=(0, 6))
@@ -875,10 +877,14 @@ class App(api.Backend):
             self.widget_button.pack_forget()
 
     def install_widget(self) -> None:
-        self.widget_button.configure(state="disabled")
+        label = self.widget_button.cget("text")
+        # It takes a while (the admin prompt, then Windows installing the package): say so on the button.
+        self.widget_button.configure(state="disabled", text="Installing the widget...")
 
         def done(_: None) -> None:
             self.set_status("")
+            self.cfg.data["widgetSetup"] = widget.PACKAGE_FAMILY  # certificate trusted, loopback exempted
+            self.cfg.save()
             self._show_widget_button("current")
             log.get().info("widget: installed")
             self.msg.showinfo("AutoCheatDeck", "The Game Bar widget is installed.\n\nOpen Game Bar (Win+G, or the "
@@ -886,10 +892,13 @@ class App(api.Backend):
                               "always there.", parent=self.root)
 
         def failed(error: Exception) -> None:
-            self.widget_button.configure(state="normal")
+            self.widget_button.configure(state="normal", text=label)
+            log.get().warning("widget: install failed: %s", error)
             self._bg_failed(error)
 
-        self.run_bg(lambda: widget.install(self.app_dir), done, "Installing the Game Bar widget...",
+        setup_done = self.cfg.data.get("widgetSetup") == widget.PACKAGE_FAMILY
+        self.run_bg(lambda: widget.install(self.app_dir, setup_done), done,
+                    "Installing the Game Bar widget. Approve the administrator prompt; this takes a moment...",
                     on_error=failed)
 
     # ---------- send logs ----------

@@ -4,13 +4,19 @@ The release zip carries the signed widget package in widget/ (with the framework
 sideloaded UWP app needs in widget/Dependencies/<arch>/). Windows only installs it once its signing
 certificate is trusted, which takes administrator rights:
 
-1. elevated (one UAC prompt, skipped if already trusted): add the certificate to the machine's
-   Trusted People. The certificate is built into AutoCheatDeck, passed inline and loaded from
-   memory (its thumbprint checked), never from a file the user's programs could swap;
+1. elevated (one UAC prompt, skipped once done): add the certificate to the machine's Trusted
+   People, and exempt the widget from loopback isolation. The certificate is built into
+   AutoCheatDeck, passed inline and loaded from memory (its thumbprint checked), never from a file
+   the user's programs could swap;
 2. as the user (no prompt): Add-AppxPackage with the dependencies, so it installs for this account.
+
+Loopback: Windows keeps packaged apps such as Game Bar widgets from connecting to 127.0.0.1, where
+AutoCheatDeck's API listens, unless the package is exempted. Visual Studio adds that exemption when
+it deploys a widget, so a widget installed any other way can't reach the app without it.
 """
 
 import glob
+import hashlib
 import os
 import platform
 import re
@@ -20,6 +26,18 @@ import zipfile
 from . import elevate
 
 PACKAGE_NAME = "JoeysRetroHandhelds.AutoCheatDeckWidget"
+PUBLISHER = "CN=JoeysRetroHandhelds"
+
+
+def publisher_id(publisher: str) -> str:
+    """Windows' 13-character publisher id: the first 64 bits of SHA-256 over the UTF-16 publisher,
+    plus a zero bit, in Crockford-style base32 (e.g. Microsoft's is 8wekyb3d8bbwe)."""
+    bits = int.from_bytes(hashlib.sha256(publisher.encode("utf-16-le")).digest()[:8], "big") << 1
+    alphabet = "0123456789abcdefghjkmnpqrstvwxyz"
+    return "".join(alphabet[(bits >> (5 * (12 - i))) & 31] for i in range(13))
+
+
+PACKAGE_FAMILY = "{}_{}".format(PACKAGE_NAME, publisher_id(PUBLISHER))
 CERT_THUMBPRINT = "5C77A765E59001854442E91D04D81081825447DC"
 # widget/AutoCheatDeckWidget.cer (CN=JoeysRetroHandhelds), the public half of the signing certificate.
 CERT_BASE64 = (
@@ -37,7 +55,7 @@ CERT_BASE64 = (
     "kGNZi5XL"
 )
 
-TRUST_SCRIPT = r"""
+SETUP_SCRIPT = r"""
 $ErrorActionPreference = 'Stop'
 # From memory, not a file: nothing the user's programs can swap before it is trusted.
 $cert = [Security.Cryptography.X509Certificates.X509Certificate2]::new([Convert]::FromBase64String($Cert))
@@ -45,6 +63,9 @@ if ($cert.Thumbprint -ne $Thumbprint) { throw 'Unexpected certificate' }
 $store = [Security.Cryptography.X509Certificates.X509Store]::new('TrustedPeople', 'LocalMachine')
 $store.Open('ReadWrite')
 try { $store.Add($cert) } finally { $store.Close() }
+# Let the widget reach AutoCheatDeck on 127.0.0.1 (works before the package is installed).
+& "$env:SystemRoot\System32\CheckNetIsolation.exe" LoopbackExempt -a "-n=$Family" | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "CheckNetIsolation failed ($LASTEXITCODE)" }
 """
 
 NO_WINDOW = elevate.NO_WINDOW
@@ -84,15 +105,28 @@ def installed_version() -> str:
     return _powershell("(Get-AppxPackage -Name '{}' | Select-Object -First 1).Version".format(PACKAGE_NAME))
 
 
-def state(app_dir: str | None) -> str:
-    """"install", "update", "current", or "" (nothing to offer: no bundled widget, or not Windows)."""
+def state(app_dir: str | None, setup_done: bool = False) -> str:
+    """"install", "update", "setup" (installed, but it can't reach AutoCheatDeck), "current", or ""
+    (nothing to offer: no bundled widget, or not Windows)."""
     bundle = bundled(app_dir) if app_dir else None
     if not bundle:
         return ""
     installed = installed_version()
     if not installed:
         return "install"
-    return "update" if _version_tuple(bundle_version(bundle)) > _version_tuple(installed) else "current"
+    if _version_tuple(bundle_version(bundle)) > _version_tuple(installed):
+        return "update"
+    # setup_done: AutoCheatDeck remembers a finished setup, in case the exemption list can't be read.
+    return "current" if setup_done or loopback_exempt() else "setup"
+
+
+def loopback_exempt() -> bool:
+    """Is the widget allowed to connect to 127.0.0.1? (False if it can't be told.)"""
+    try:
+        listing = _powershell("& \"$env:SystemRoot\\System32\\CheckNetIsolation.exe\" LoopbackExempt -s")
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return PACKAGE_FAMILY.lower() in listing.lower()
 
 
 def cert_trusted() -> bool:
@@ -105,15 +139,17 @@ def dependencies(app_dir: str) -> list[str]:
     return sorted(glob.glob(os.path.join(app_dir, "widget", "Dependencies", arch, "*.*x")))
 
 
-def install(app_dir: str) -> None:
+def install(app_dir: str, setup_done: bool = False) -> None:
     """Trust the certificate (one UAC prompt, if needed), then install or update the widget for
     this user. Raises OSError with Windows' message if something fails."""
     bundle = bundled(app_dir)
     if not bundle:
         raise OSError("This copy of AutoCheatDeck doesn't include the widget.")
-    if not cert_trusted():
-        if not elevate.run_powershell(TRUST_SCRIPT, Cert="".join(CERT_BASE64), Thumbprint=CERT_THUMBPRINT):
-            raise OSError("Installing the widget needs administrator approval (to trust its certificate).")
+    if not (cert_trusted() and (setup_done or loopback_exempt())):
+        if not elevate.run_powershell(SETUP_SCRIPT, Cert="".join(CERT_BASE64), Thumbprint=CERT_THUMBPRINT,
+                                      Family=PACKAGE_FAMILY):
+            raise OSError("Installing the widget needs administrator approval (to trust its certificate "
+                          "and let it reach AutoCheatDeck).")
     command = "Add-AppxPackage -Path {} -ForceUpdateFromAnyVersion -ForceApplicationShutdown".format(
         elevate.ps_literal(bundle))
     deps = dependencies(app_dir)
