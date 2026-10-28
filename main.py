@@ -3,8 +3,8 @@ import sys
 import tkinter as tk
 from tkinter import messagebox
 
-from autocheatdeck import updater, winapi
-from autocheatdeck.app import App
+from autocheatdeck import launcher, updater, winapi
+from autocheatdeck.app import App, launch_trainer
 
 
 MUTEX = "Local\\AutoCheatDeck-Windows"
@@ -33,6 +33,12 @@ def finish_update(wait_pid: str, app_dir: str) -> None:
 
 def main() -> None:
     winapi.enable_dpi_awareness()
+
+    # Steam launch option: AutoCheatDeck.exe --run <appid> <the game's command...>. Starts the game,
+    # then its trainer, and waits for the game. No window and no single-instance check: it runs
+    # alongside the app.
+    if len(sys.argv) >= 3 and sys.argv[1] == launcher.RUN_FLAG:
+        sys.exit(launcher.run(sys.argv[2], sys.argv[3:], launch_trainer))
 
     finishing = _take_arg("--finish-update", 2)
     if finishing:
