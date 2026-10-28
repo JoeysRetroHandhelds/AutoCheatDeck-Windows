@@ -7,6 +7,9 @@ from autocheatdeck import updater, winapi
 from autocheatdeck.app import App
 
 
+MUTEX = "Local\\AutoCheatDeck-Windows"
+
+
 def _take_arg(flag: str, count: int) -> list[str] | None:
     if flag not in sys.argv:
         return None
@@ -45,11 +48,12 @@ def main() -> None:
             pass
 
     background = _take_arg("--background", 0) is not None
-    if not winapi.acquire_single_instance("Local\\AutoCheatDeck-Windows"):
-        # Opening the app again is how you get back to it: show the running copy.
+    if not winapi.acquire_single_instance(MUTEX):
+        # Opening the app again is how you get back to it: show the running copy, and stay until
+        # it's hidden again (Steam treats a launch that exits at once as a closed game).
         # A startup launch finding it already running stays quiet.
         if not background:
-            winapi.ask_running_copy_to_show()
+            winapi.show_running_copy_and_wait(MUTEX)
         return
 
     root = tk.Tk()

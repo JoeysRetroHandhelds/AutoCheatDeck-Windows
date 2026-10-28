@@ -16,7 +16,7 @@ from tkinter import messagebox, ttk
 from typing import Any, Callable
 
 from . import __version__, config, defender, diagnostics, fling, leftovers, library, log, startup, steam, updater
-from .winapi import WINDOW_TITLE, listen_for_show
+from .winapi import WINDOW_TITLE, HiddenSignal, listen_for_show
 
 FONT = ("Segoe UI", 12)
 # Keyboard keys drive the same navigation as the controller. Handhelds such as the ROG Ally send
@@ -56,6 +56,8 @@ class App:
     def __init__(self, root: tk.Tk, background: bool = False):
         self.root = root
         self.hidden = False
+        self._hidden_signal = HiddenSignal()  # a second launch waits on it
+        self._hidden_signal.set(background)
         self.cfg = config.Config()
         log.get().info("AutoCheatDeck %s starting (frozen=%s)", __version__, getattr(sys, "frozen", False))
         self.games: list[steam.Game] = []
@@ -120,7 +122,7 @@ class App:
         from .tray import Tray
 
         self.tray = Tray(on_show=lambda: self.post(self.show_window), on_quit=lambda: self.post(self.quit))
-        listen_for_show(lambda: self.post(self.show_window))
+        listen_for_show(lambda: self.post(self._shown_by_another_launch))
         if background:
             self._set_hidden(True)  # started with Windows: live in the tray until asked for
 
@@ -197,9 +199,14 @@ class App:
 
     def _set_hidden(self, hidden: bool) -> None:
         self.hidden = hidden
+        self._hidden_signal.set(hidden)  # a second launch waiting on the window can exit now
         if hidden:
             self.root.withdraw()
             self.gamepad.set_active(False)  # withdrawing sends no FocusOut
+
+    def _shown_by_another_launch(self) -> None:
+        log.get().info("another launch (e.g. from Steam) asked to show the window")
+        self.show_window()
 
     def hide_to_tray(self) -> None:
         self._set_hidden(True)
@@ -209,6 +216,7 @@ class App:
             self.tray.notify("Still running in the tray. Right-click the tray icon to quit.")
 
     def show_window(self) -> None:
+        log.get().info("window shown")
         self._set_hidden(False)
         if self._fill_screen and self.root.state() != "zoomed":
             self.root.state("zoomed")
@@ -219,6 +227,7 @@ class App:
         self._remove_widget_leftovers()
 
     def quit(self) -> None:
+        self._hidden_signal.set(True)
         self.gamepad.stop()
         self.tray.stop()
         self.root.destroy()
