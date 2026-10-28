@@ -62,7 +62,16 @@ public struct PROCESS_INFORMATION {
 public static extern bool CreateProcess(string app, string cmd, IntPtr pa, IntPtr ta, bool inherit, int flags,
     IntPtr env, string dir, ref STARTUPINFO si, out PROCESS_INFORMATION pi);
 [DllImport("kernel32.dll")] public static extern bool CloseHandle(IntPtr h);
+[DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
+[DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+[DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);
+[DllImport("user32.dll")] public static extern void mouse_event(int flags, int dx, int dy, int data, IntPtr extra);
+[DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, int flags);
+public struct POINT { public int X; public int Y; }
 '@
+# Per-monitor DPI aware: UI Automation's coordinates and the mouse then agree (on a 150% screen
+# they wouldn't, and clicks would miss).
+[void][Acd.Native]::SetProcessDpiAwarenessContext([IntPtr](-4))
 $cache = @{}  # trainer title -> @{ hwnd; rows = list of @{ name; kind; toggle } }
 
 # The trainer's own window is never shown: AutoCheatDeck's overlay replaces it. Hidden and disabled,
@@ -129,7 +138,7 @@ function Get-Rows($title, [bool]$refresh) {
                 $value = $vp
             }
             [void]$rows.Add(@{ name = $label.Current.Name; kind = $row.Current.ClassName; toggle = $toggle
-                value = $value })
+                button = $button; value = $value })
         }
         $entry = @{ hwnd = $hwnd; rows = $rows }
         $cache[$title] = $entry
@@ -157,6 +166,25 @@ function Set-CheatValue($title, $name, [int]$nth, $value, [bool]$refresh) {
     Hide-Trainer $entry.hwnd
     return $row.value.Current.Value
 }
+# A real mouse click on a trainer button. UI Automation's Toggle only flips how the button looks:
+# FLiNG switches the cheat in the game from the button's Click, which only real input raises.
+# So: show the trainer on top for a moment, click, put the mouse back, hide it again.
+function Click-Button($hwnd, $button) {
+    [void][Acd.Native]::EnableWindow($hwnd, $true)
+    [void][Acd.Native]::ShowWindow($hwnd, 4)   # SW_SHOWNOACTIVATE
+    [void][Acd.Native]::SetWindowPos($hwnd, [IntPtr](-1), 0, 0, 0, 0, 0x0013)   # topmost, no move/size/activate
+    Start-Sleep -Milliseconds 60   # let it draw, so the click lands on the button
+    $r = $button.Current.BoundingRectangle
+    $old = New-Object Acd.Native+POINT
+    [void][Acd.Native]::GetCursorPos([ref]$old)
+    [void][Acd.Native]::SetCursorPos([int]($r.X + $r.Width / 2), [int]($r.Y + $r.Height / 2))
+    [Acd.Native]::mouse_event(0x0002, 0, 0, 0, [IntPtr]::Zero)   # left down
+    [Acd.Native]::mouse_event(0x0004, 0, 0, 0, [IntPtr]::Zero)   # left up
+    Start-Sleep -Milliseconds 30
+    [void][Acd.Native]::SetCursorPos($old.X, $old.Y)
+    [void][Acd.Native]::SetWindowPos($hwnd, [IntPtr](-2), 0, 0, 0, 0, 0x0013)   # not topmost
+}
+
 function Toggle-Cheat($title, $name, [int]$nth, [bool]$refresh) {
     $entry = Get-Rows $title $refresh
     $row = $null
@@ -166,7 +194,7 @@ function Toggle-Cheat($title, $name, [int]$nth, [bool]$refresh) {
     }
     if (-not $row) { throw ("No cheat named " + $name) }
     $before = Is-On $row.toggle
-    $row.toggle.Toggle()
+    Click-Button $entry.hwnd $row.button
     # The trainer applies the change asynchronously: wait (briefly) until the state flips.
     $deadline = (Get-Date).AddMilliseconds(600)
     while ((Is-On $row.toggle) -eq $before -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 25 }
@@ -377,7 +405,8 @@ class Helper:
                 raise HelperError("The admin helper stopped.")
         data = json.loads(reply)
         if not data.get("ok"):
-            raise HelperError(data.get("error") or "The admin helper failed.")
+            log.get().warning("helper: %s failed: %s", cmd, data.get("error") or "(no message)")
+            raise HelperError(data.get("error") or "The admin helper failed ({}).".format(cmd))
         return data
 
     def _readline(self) -> str:
