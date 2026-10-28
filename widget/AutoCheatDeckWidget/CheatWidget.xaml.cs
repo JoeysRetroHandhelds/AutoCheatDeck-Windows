@@ -164,7 +164,10 @@ namespace AutoCheatDeckWidget
                 {
                 }
             }
-            ShowStatus("AutoCheatDeck didn't start. Open it on the desktop, then reopen this widget.");
+            // Started (or already running) but unreachable: almost always the widget's loopback
+            // exemption missing, which AutoCheatDeck's widget button sets up.
+            ShowStatus("Can't reach AutoCheatDeck. Open it on the desktop and press \"Finish Game Bar widget "
+                       + "setup\" (or \"Install Game Bar widget\"), then reopen this widget.");
             return false;
         }
 
