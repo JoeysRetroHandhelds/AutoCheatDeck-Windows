@@ -11,6 +11,12 @@ A portable app that finds [FLiNG](https://flingtrainer.com) trainers for your in
 
 Games are listed most recently played first. The list includes Steam games, Xbox app / Game Pass games (installed in any Xbox games folder, on any drive), and anything you add with **Add game** (pick the game's .exe: DRM-free, GOG, Epic, emulators...). For Xbox and added games, "last played" is when you last launched their trainer.
 
+### Start the trainer with a Steam game
+
+For a Steam game with a trainer, tick **Start the trainer when I play this game in Steam**. From then on, pressing Play in Steam (desktop, Big Picture or Xbox full screen mode) starts the game and, a few seconds later, its trainer; AutoCheatDeck doesn't need to be open. Trainers run as administrator, so Windows asks for approval each time.
+
+This works through the game's Steam launch options. Steam only saves those while it's closed, so ticking or unticking the box closes Steam and opens it again. Launch options you already had are kept, and come back as they were when you untick it. A backup of Steam's settings file is kept next to it (`localconfig.vdf.autocheatdeck-backup`). Prefer to do it yourself? **Copy the Steam launch option** and paste it into the game's Properties > Launch Options. If you move the AutoCheatDeck folder, untick and tick the box again so the option points at the new place.
+
 AutoCheatDeck does nothing in the background: no game detection and no timers. While it sits in the tray or isn't the focused window it uses no CPU.
 
 ### Controller

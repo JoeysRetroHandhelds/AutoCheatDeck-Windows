@@ -15,7 +15,8 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Any, Callable
 
-from . import __version__, config, defender, diagnostics, fling, leftovers, library, log, startup, steam, updater
+from . import (__version__, config, defender, diagnostics, fling, launcher, leftovers, library, log, startup, steam,
+               steamcfg, updater)
 from .winapi import WINDOW_TITLE, HiddenSignal, listen_for_show
 
 FONT = ("Segoe UI", 12)
@@ -61,6 +62,7 @@ class App:
         self.cfg = config.Config()
         log.get().info("AutoCheatDeck %s starting (frozen=%s)", __version__, getattr(sys, "frozen", False))
         self.games: list[steam.Game] = []
+        self._steam_trainer_games: set[str] = set()  # Steam games whose launch option starts their trainer
         self.by_id: dict[str, steam.Game] = {}
         self._events: queue.Queue[Callable[[], None]] = queue.Queue()
         # Updates only apply to the packaged app; None when running from source.
@@ -301,6 +303,8 @@ class App:
         first_load = not self.games
         self.games = games
         self.by_id = {g.appid: g for g in games}
+        if self.app_dir:
+            self._load_steam_launch()  # which Steam games start their trainer (a file read, off the UI thread)
         # Trainers installed before game versions were recorded: take the current version as theirs.
         changed = False
         for game in games:
@@ -400,6 +404,46 @@ class App:
             buttons.append(("Remove this game from the list", lambda: self.remove_manual_game(game)))
         for label, command in buttons:
             ttk.Button(self.detail, text=label, command=command).pack(fill="x", pady=4)
+        if has_trainer and game.source == "Steam" and self.app_dir:
+            self._steam_launch_controls(game)
+
+    def _steam_launch_controls(self, game: steam.Game) -> None:
+        on = tk.BooleanVar(value=game.appid in self._steam_trainer_games)
+        ttk.Checkbutton(self.detail, text="Start the trainer when I play this game in Steam", variable=on,
+                        command=lambda: self.toggle_steam_launch(game, on)).pack(anchor="w", pady=(12, 0))
+        ttk.Button(self.detail, text="Copy the Steam launch option",
+                   command=lambda: self.copy_steam_launch(game)).pack(fill="x", pady=4)
+
+    def copy_steam_launch(self, game: steam.Game) -> None:
+        self.root.clipboard_clear()
+        self.root.clipboard_append(launcher.launch_option(sys.executable, game.appid))
+        self.set_status("Copied. In Steam: right-click {} > Properties > Launch Options, and paste.".format(game.name))
+
+    def _load_steam_launch(self) -> None:
+        def done(found: set[str]) -> None:
+            self._steam_trainer_games = found
+            self._show_selected()
+
+        self.run_bg(steamcfg.games_with_trainer, done,
+                    on_error=lambda e: log.get().warning("steam launch options: %s", e))
+
+    def toggle_steam_launch(self, game: steam.Game, var: tk.BooleanVar) -> None:
+        want = var.get()
+        var.set(not want)  # until it's done
+        if steamcfg.steam_running() and not self.msg.askyesno(
+                "AutoCheatDeck", "Steam saves launch options only while it's closed, so it will close and open "
+                "again. Continue?", parent=self.root):
+            return
+
+        def done(_: None) -> None:
+            (self._steam_trainer_games.add if want else self._steam_trainer_games.discard)(game.appid)
+            var.set(want)
+            log.get().info("steam launch option for %s: %s", game.appid, "on" if want else "off")
+            self.set_status("{}: the trainer now {} with the game.".format(
+                game.name, "starts" if want else "no longer starts"))
+
+        self.run_bg(lambda: steamcfg.set_trainer_with_game(game.appid, want, sys.executable), done,
+                    "Updating {}'s Steam launch options...".format(game.name))
 
     def _record_played(self, appids: set[str], when: int) -> None:
         played = self.cfg.data.setdefault("lastPlayed", {})
