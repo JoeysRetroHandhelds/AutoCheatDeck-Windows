@@ -4,7 +4,6 @@ Nothing runs on a timer: background threads hand work to the window through a qu
 with a Tk event, and the controller is only read while one of the app's windows is focused.
 """
 
-import json
 import os
 import queue
 import shutil
@@ -16,8 +15,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Any, Callable
 
-from . import (__version__, api, cheats, config, defender, diagnostics, fling, helper, library, log, protocol,
-               startup, steam, updater, values, widget)
+from . import __version__, config, defender, diagnostics, fling, leftovers, library, log, startup, steam, updater
 from .winapi import WINDOW_TITLE, listen_for_show
 
 FONT = ("Segoe UI", 12)
@@ -54,19 +52,13 @@ class Dialogs:
         return wrapped
 
 
-class App(api.Backend):
-    def __init__(self, root: tk.Tk, background: bool = False, idle_quit: int = 0):
+class App:
+    def __init__(self, root: tk.Tk, background: bool = False):
         self.root = root
         self.hidden = False
-        # Started by the widget: quit this many seconds after its last request, unless the user
-        # opens the window (then it behaves like a normal start). 0 = never.
-        self.idle_quit = idle_quit
-        self._idle_job = None
         self.cfg = config.Config()
         log.get().info("AutoCheatDeck %s starting (frozen=%s)", __version__, getattr(sys, "frozen", False))
         self.games: list[steam.Game] = []
-        # Set once the game library has been read; the widget's first request waits for it.
-        self._games_ready = threading.Event()
         self.by_id: dict[str, steam.Game] = {}
         self._events: queue.Queue[Callable[[], None]] = queue.Queue()
         # Updates only apply to the packaged app; None when running from source.
@@ -110,9 +102,6 @@ class App(api.Backend):
         self.gamepad = Gamepad(on_press=lambda name: self.post(lambda: self.on_pad(name)),
                                on_change=lambda: self.post(self._refresh_controller_status))
         self.msg = Dialogs(self.gamepad)
-        from .overlay import Overlay
-
-        self.overlay = Overlay(self)
         for key in KEYS:
             root.bind_all("<{}>".format(key), self._on_key)
         # Read the controller only while one of our windows is focused. (Tk's <Activate> never fires
@@ -124,10 +113,6 @@ class App(api.Backend):
 
         # A portable folder can move; keep the startup entry pointing at this copy.
         if self.app_dir:
-            try:
-                protocol.register(sys.executable)  # lets the widget start us
-            except OSError:
-                log.get().exception("protocol: could not register the autocheatdeck: link")
             try:
                 startup.refresh(sys.executable)
             except OSError:
@@ -141,17 +126,12 @@ class App(api.Backend):
 
         if self.app_dir:
             updater.cleanup(self.app_dir)
-            setup_done = self.cfg.data.get("widgetSetup") == widget.PACKAGE_FAMILY
-            self.run_bg(lambda: widget.state(self.app_dir, setup_done), self._show_widget_button,
-                        on_error=lambda e: log.get().warning("widget: state check failed: %s", e))
+        self._leftovers_checked = bool(self.cfg.data.get("widgetRemoved"))
+        if not background:
+            self._remove_widget_leftovers()
         self._refresh_update_controls()
         if self.cfg.data.get("checkUpdates", True):
             self.check_app_update(quiet=True)
-
-        # Local API for the Game Bar widget (sleeps in accept() until a request arrives).
-        # Admin helper for launching trainers and switching cheats (started on first use).
-        self.helper = helper.Helper()
-        self.api = api.Server(self, on_error=lambda text: self.post(lambda: self.set_status(text)))
 
         root.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
         root.bind("<<Wake>>", lambda _: self._drain_events())
@@ -208,9 +188,7 @@ class App(api.Backend):
         self.set_status("")
         if self.hidden:
             # A dialog from a hidden window can't be seen, and until it's closed nothing else
-            # (like opening the overlay) runs: show it in the overlay or just keep it in the log.
-            if self.overlay.visible:
-                self.overlay.status.configure(text="Error: {}".format(error))
+            # runs: keep it in the log.
             return
         self.msg.showerror("AutoCheatDeck", str(error), parent=self.root)
 
@@ -231,7 +209,6 @@ class App(api.Backend):
             self.tray.notify("Still running in the tray. Right-click the tray icon to quit.")
 
     def show_window(self) -> None:
-        self._stop_idle_quit()  # the user is here: stay like a normal start
         self._set_hidden(False)
         if self._fill_screen and self.root.state() != "zoomed":
             self.root.state("zoomed")
@@ -239,10 +216,9 @@ class App(api.Backend):
         self.root.lift()
         self.root.focus_force()
         self.tree.focus_set()
+        self._remove_widget_leftovers()
 
     def quit(self) -> None:
-        self.api.stop()
-        self.helper.stop()
         self.gamepad.stop()
         self.tray.stop()
         self.root.destroy()
@@ -290,8 +266,6 @@ class App(api.Backend):
         ttk.Checkbutton(bottom, text="Start with Windows (in tray)", variable=self.startup_on,
                         command=self._toggle_startup).pack(side="left")
         ttk.Button(bottom, text="Send logs", command=self.send_logs).pack(side="right")
-        # "Install / Update Game Bar widget", shown once we know the widget needs it.
-        self.widget_button = ttk.Button(bottom, text="", command=self.install_widget)
 
         updates = ttk.Frame(self.root, padding=(12, 0, 12, 8))
         updates.pack(fill="x")
@@ -318,7 +292,6 @@ class App(api.Backend):
         first_load = not self.games
         self.games = games
         self.by_id = {g.appid: g for g in games}
-        self._games_ready.set()
         # Trainers installed before game versions were recorded: take the current version as theirs.
         changed = False
         for game in games:
@@ -333,8 +306,8 @@ class App(api.Backend):
         self._fill_list()
         if first_load:
             # Start on the list so a controller works straight away, but only when the window is
-            # showing: asking for focus while hidden (tray / widget start) still activates the app,
-            # which closes Game Bar's overlay. show_window() focuses the list when it appears.
+            # showing: asking for focus while hidden (tray start) would bring the app to the front.
+            # show_window() focuses the list when it appears.
             if not self.hidden:
                 self.tree.focus_set()
 
@@ -480,165 +453,6 @@ class App(api.Backend):
         # Only Steam records play times; launching a trainer counts as playing for the others.
         self._record_played({appid}, int(time.time()))
 
-    # ---------- cheats (shared by the Game Bar API) ----------
-
-    def _cheat_cache(self, appid: str) -> str:
-        folder = os.path.join(config.data_dir(), "cheats")
-        os.makedirs(folder, exist_ok=True)
-        return os.path.join(folder, appid + ".json")
-
-    def cached_cheats(self, appid: str) -> dict | None:
-        entry = self.cfg.game(appid)
-        if not entry or not entry.get("sha256"):
-            return None
-        return cheats.load_cache(self._cheat_cache(appid), entry["sha256"])
-
-    def _trainer(self, appid: str) -> dict:
-        entry = self.cfg.game(appid)
-        if defender.trainer_missing(entry):
-            raise ValueError(defender.MISSING + " (See AutoCheatDeck on the desktop.)")
-        if not entry or not os.path.isfile(entry.get("path", "")):
-            raise ValueError("No trainer installed for this game")
-        return entry
-
-    def read_cheats(self, appid: str, wait_seconds: float = 0) -> dict:
-        """Read the running trainer's cheats through the helper and cache them (off the UI thread)."""
-        entry = self._trainer(appid)
-        deadline = time.monotonic() + wait_seconds
-        while not cheats.trainer_window(entry["path"]) and time.monotonic() < deadline:
-            time.sleep(0.5)  # bounded wait for a trainer that was just started
-        if not cheats.trainer_window(entry["path"]):
-            raise ValueError("The trainer isn't running")
-        parsed = cheats.parse_trainer_ui(self.helper.dump(helper.trainer_title(entry["path"])))
-        if not parsed["cheats"]:
-            raise ValueError("No cheats found in the trainer window yet")
-        cheats.save_cache(self._cheat_cache(appid), entry["sha256"], parsed)
-        try:  # the trainer's control tree, for Send logs (how its value boxes etc. look)
-            tree = self.helper.dump_tree(helper.trainer_title(entry["path"]))
-            with open(self._cheat_cache(appid)[:-5] + ".tree.json", "w", encoding="utf-8") as f:
-                json.dump({"trainer": entry.get("title", ""), "tree": tree}, f)
-        except Exception:
-            log.get().exception("cheats: saving the trainer tree failed")
-        log.get().info("cheats: read %d cheats for %s", len(parsed["cheats"]), appid)
-        return parsed
-
-    # Game Bar API (called on the API server's threads)
-
-    def _restart_idle_timer(self) -> None:
-        if not self.idle_quit:
-            return
-        if self._idle_job is not None:
-            self.root.after_cancel(self._idle_job)
-        self._idle_job = self.root.after(self.idle_quit * 1000, self._idle_expired)
-
-    def _stop_idle_quit(self) -> None:
-        self.idle_quit = 0
-        if self._idle_job is not None:
-            self.root.after_cancel(self._idle_job)
-            self._idle_job = None
-
-    def _idle_expired(self) -> None:
-        self._idle_job = None
-        running = [t for t in self.helper.trainers if cheats.trainer_window_by_title(t)]
-        if running:
-            self._restart_idle_timer()  # keep the helper (and its one UAC approval) while playing
-            return
-        if self.idle_quit and self.hidden and not self.overlay.visible:
-            log.get().info("widget mode: no requests for %ss, quitting", self.idle_quit)
-            self.quit()
-
-    def api_activity(self) -> None:
-        if self.idle_quit:
-            self.post(self._restart_idle_timer)
-
-    def api_games(self) -> list[dict]:
-        self._games_ready.wait(15)  # a just-started app is still reading the game library
-        if not self.helper.running and not self.helper.declined:
-            # The widget is open: start the admin helper now, so Launch doesn't wait for it.
-            threading.Thread(target=self._warm_helper, name="helper-start", daemon=True).start()
-        result = []
-        for game in self.games:
-            entry = self.cfg.game(game.appid)
-            if defender.trainer_missing(entry):
-                result.append({"id": game.appid, "name": game.name, "source": game.source,
-                               "trainer": entry.get("title", ""), "hasCheats": False, "running": False,
-                               "gameUpdated": False, "missing": True})
-            elif entry and os.path.isfile(entry.get("path", "")):
-                result.append({"id": game.appid, "name": game.name, "source": game.source,
-                               "trainer": entry["title"], "hasCheats": self.cached_cheats(game.appid) is not None,
-                               "running": bool(cheats.trainer_window(entry["path"])),
-                               "gameUpdated": library.game_updated(entry, game)})
-        return result
-
-    def _warm_helper(self) -> None:
-        try:
-            self.helper.request("ping")
-        except Exception:  # Launch tries again (and reports the error)
-            log.get().exception("helper: early start failed")
-
-    def api_cheats(self, appid: str) -> list[dict] | None:
-        """Cached cheats, with live on/off state when the trainer is running."""
-        cached = self.cached_cheats(appid)
-        if not cached:
-            return None
-        entry = self._trainer(appid)
-        states: dict[str, dict] = {}
-        if cheats.trainer_window(entry["path"]):
-            states = self.helper.states(helper.trainer_title(entry["path"]))
-        return cheats.with_states(cached["cheats"], states)
-
-    def api_launch(self, appid: str) -> dict:
-        entry = self._trainer(appid)
-        if not cheats.trainer_window(entry["path"]):
-            actual = fling.check_trainer(entry["path"], os.path.join(config.trainers_dir(), appid),
-                                         entry.get("exeSha256"))
-            if not entry.get("exeSha256"):  # installed before fingerprints were recorded
-                self.post(lambda: self.cfg.set_game(appid, dict(entry, exeSha256=actual)))
-            try:
-                self.helper.launch(entry["path"])  # the helper is elevated: no second prompt for the trainer
-            except helper.HelperError as e:
-                if defender.blocked(e):
-                    raise ValueError(defender.BLOCKED) from e
-                raise
-            log.get().info("started trainer %s (via helper)", entry["path"])
-            self.post(lambda: self._record_played({appid}, int(time.time())))
-        reading = self.cached_cheats(appid) is None
-        if reading:
-            def work() -> None:
-                try:
-                    self.read_cheats(appid, wait_seconds=30)
-                except Exception:  # the widget sees "no cheats yet" and can ask again
-                    log.get().exception("cheats: reading after launch failed")
-
-            threading.Thread(target=work, name="read-cheats", daemon=True).start()
-        return {"started": True, "readingCheats": reading}
-
-    def api_overlay(self, appid: str) -> dict:
-        self._trainer(appid)  # errors (no trainer) go back to the widget
-        from .overlay import exclusive_fullscreen
-
-        self.post(lambda: self.overlay.open(appid))
-        return {"open": True, "exclusiveFullscreen": exclusive_fullscreen()}
-
-    def api_read(self, appid: str) -> dict:
-        return {"cheats": self.read_cheats(appid)["cheats"]}
-
-    def api_toggle(self, appid: str, name: str, nth: int = 0) -> dict:
-        entry = self._trainer(appid)
-        if not name:
-            raise ValueError("No cheat given")
-        on = self.helper.toggle(helper.trainer_title(entry["path"]), name, nth)
-        log.get().info("cheats: %s -> %s", name, "on" if on else "off")
-        return {"on": on}
-
-    def api_set_value(self, appid: str, name: str, value: str, nth: int = 0) -> dict:
-        entry = self._trainer(appid)
-        if not name:
-            raise ValueError("No cheat given")
-        now = self.helper.set_value(helper.trainer_title(entry["path"]), name, values.check(value), nth)
-        log.get().info("cheats: %s = %s", name, now)
-        return {"value": now}
-
     def find_trainer(self) -> None:
         game = self.by_id.get(self.selected_appid() or "")
         if game:
@@ -658,7 +472,6 @@ class App(api.Backend):
                 "pageUrl": page["url"],
                 "path": result["path"],
                 "sha256": result["sha256"],
-                "exeSha256": result["exeSha256"],  # checked before the admin helper starts it
                 "gameBuild": game.build,  # the game version this trainer was installed for
             })
             self.set_status("Installed {}".format(version["title"]))
@@ -780,7 +593,7 @@ class App(api.Backend):
         # Windows which process owns the foreground window (one call, only on focus events).
         from .gamepad import foreground_window
 
-        self.gamepad.set_active((not self.hidden or self.overlay.visible) and foreground_window()[0])
+        self.gamepad.set_active(not self.hidden and foreground_window()[0])
 
     def _refresh_controller_status(self) -> None:
         if not self.gamepad.available:
@@ -814,9 +627,6 @@ class App(api.Backend):
         return found
 
     def on_pad(self, name: str) -> None:
-        if self.overlay.visible:
-            self.overlay.on_pad(name)
-            return
         widget = self.root.focus_get()
         top = widget.winfo_toplevel() if widget else self.root
         if isinstance(top, TrainerFinder):
@@ -871,42 +681,44 @@ class App(api.Backend):
             elif name == "b":
                 self.tree.focus_set()
 
-    # ---------- Game Bar widget ----------
+    # ---------- Game Bar widget leftovers ----------
 
-    def _show_widget_button(self, state: str) -> None:
-        log.get().info("widget: %s", state or "not bundled")
-        labels = {"install": "Install Game Bar widget", "update": "Update Game Bar widget",
-                  "setup": "Finish Game Bar widget setup"}
-        if state in labels:
-            self.widget_button.configure(text=labels[state], state="normal")
-            self.widget_button.pack(side="right", padx=(0, 6))
-        else:
-            self.widget_button.pack_forget()
+    def _remove_widget_leftovers(self) -> None:
+        """Once: remove what the Game Bar widget of 2.1.x left behind (2.2.0 dropped it). Runs when
+        the window first shows, since the machine-wide part asks for administrator approval."""
+        if self._leftovers_checked or not self.app_dir:
+            return
+        self._leftovers_checked = True
 
-    def install_widget(self) -> None:
-        label = self.widget_button.cget("text")
-        # It takes a while (the admin prompt, then Windows installing the package): say so on the button.
-        self.widget_button.configure(state="disabled", text="Installing the widget...")
+        def work() -> tuple[list[str], bool]:
+            return leftovers.remove_user_parts(), leftovers.needs_admin()
 
-        def done(_: None) -> None:
+        def done(result: tuple[list[str], bool]) -> None:
+            removed, admin = result
+            if removed:
+                log.get().info("widget leftovers removed: %s", ", ".join(removed))
+            if not admin:
+                finished(True)
+                return
+            if not self.msg.askyesno(
+                    "AutoCheatDeck",
+                    "AutoCheatDeck no longer has a Game Bar widget or cheat overlay: launch the trainer and "
+                    "use its own window instead.\n\nThe old widget has been removed. Also remove its "
+                    "certificate and network exemption from Windows? This needs one administrator approval.",
+                    parent=self.root):
+                return  # asked again next start
+            self.run_bg(leftovers.remove_admin_parts, finished, "Removing the old widget's certificate...",
+                        on_error=lambda e: log.get().warning("widget leftovers: %s", e))
+
+        def finished(ok: bool) -> None:
             self.set_status("")
-            self.cfg.data["widgetSetup"] = widget.PACKAGE_FAMILY  # certificate trusted, loopback exempted
-            self.cfg.save()
-            self._show_widget_button("current")
-            log.get().info("widget: installed")
-            self.msg.showinfo("AutoCheatDeck", "The Game Bar widget is installed.\n\nOpen Game Bar (Win+G, or the "
-                              "Xbox button) and choose Widgets > AutoCheatDeck. Tip: pin it with the star so it's "
-                              "always there.", parent=self.root)
+            if ok:
+                self.cfg.data["widgetRemoved"] = True
+                self.cfg.data.pop("widgetSetup", None)
+                self.cfg.save()
+                log.get().info("widget leftovers: all removed")
 
-        def failed(error: Exception) -> None:
-            self.widget_button.configure(state="normal", text=label)
-            log.get().warning("widget: install failed: %s", error)
-            self._bg_failed(error)
-
-        setup_done = self.cfg.data.get("widgetSetup") == widget.PACKAGE_FAMILY
-        self.run_bg(lambda: widget.install(self.app_dir, setup_done), done,
-                    "Installing the Game Bar widget. Approve the administrator prompt; this takes a moment...",
-                    on_error=failed)
+        self.run_bg(work, done, on_error=lambda e: log.get().warning("widget leftovers: %s", e))
 
     # ---------- send logs ----------
 
@@ -917,7 +729,6 @@ class App(api.Backend):
             "scale": self.scale,
             "screen": "{}x{}".format(self.root.winfo_screenwidth(), self.root.winfo_screenheight()),
             "controller": self.gamepad.connected if self.gamepad.available else "unavailable",
-            "helperRunning": self.helper.running,
         })
         log.get().info("send logs: AutoCheatDeck %s", __version__)
         try:

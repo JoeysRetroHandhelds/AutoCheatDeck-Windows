@@ -26,14 +26,11 @@ class DiagnosticsTest(unittest.TestCase):
                 f.write("INFO started trainer C:\\Users\\Joey\\x.exe\n")
             with open(os.path.join(data, "config.json"), "w", encoding="utf-8") as f:
                 json.dump({"games": {"1": {"path": "C:\\Users\\Joey\\t.exe"}}}, f)
-            os.makedirs(os.path.join(data, "cheats"))
-            with open(os.path.join(data, "cheats", "1.json"), "w", encoding="utf-8") as f:
-                f.write("{}")
             dest = os.path.join(data, "out.zip")
             diagnostics.build_zip(dest, data, {"app": "2.1.0", "user": "Joey"}, user="Joey", home=HOME)
             with zipfile.ZipFile(dest) as archive:
                 names = set(archive.namelist())
-                self.assertTrue({"system.json", "autocheatdeck.log", "config.json", "cheats/1.json"} <= names)
+                self.assertTrue({"system.json", "autocheatdeck.log", "config.json"} <= names)
                 for name in names:
                     self.assertNotIn("Joey", archive.read(name).decode("utf-8"), name)
 
