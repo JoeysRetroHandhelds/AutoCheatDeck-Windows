@@ -204,7 +204,14 @@ class App(api.Backend):
         threading.Thread(target=runner, daemon=True).start()
 
     def _bg_failed(self, error: Exception) -> None:
+        log.get().error("background task failed: %s", error, exc_info=error)
         self.set_status("")
+        if self.hidden:
+            # A dialog from a hidden window can't be seen, and until it's closed nothing else
+            # (like opening the overlay) runs: show it in the overlay or just keep it in the log.
+            if self.overlay.visible:
+                self.overlay.status.configure(text="Error: {}".format(error))
+            return
         self.msg.showerror("AutoCheatDeck", str(error), parent=self.root)
 
     def set_status(self, text: str) -> None:

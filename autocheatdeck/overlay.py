@@ -135,6 +135,12 @@ class Overlay:
         top.geometry("{}x{}+{}+{}".format(width, height, x, y))
 
     def open(self, appid: str) -> None:
+        if self.visible and appid == self.appid:
+            # Already open (the widget's button pressed again): just bring it forward.
+            self.top.lift()
+            if self.focused_mode:
+                self.take_focus()
+            return
         game = self.app.by_id.get(appid)
         entry = self.app.cfg.game(appid)
         if not entry:
