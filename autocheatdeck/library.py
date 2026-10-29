@@ -71,7 +71,11 @@ def _xbox_info(config_path: str, fallback: str) -> tuple[str, str]:
 def xbox_games(drive_roots: list[str] | None = None) -> list[Game]:
     games = []
     for root in gaming_roots(drive_roots):
-        for folder in sorted(os.listdir(root)):
+        try:
+            folders = sorted(os.listdir(root))
+        except OSError:  # one unreadable games folder must not hide the others
+            continue
+        for folder in folders:
             content = os.path.join(root, folder, "Content")
             config = os.path.join(content, "MicrosoftGame.config")
             if os.path.isfile(config):

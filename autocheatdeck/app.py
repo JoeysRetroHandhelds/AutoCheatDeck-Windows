@@ -68,6 +68,7 @@ class App:
         # Updates only apply to the packaged app; None when running from source.
         self.app_dir = config.app_dir() if getattr(sys, "frozen", False) else None
         self._updating = False
+        self._steam_toggling = False
         self._downloading: set[str] = set()  # games with a trainer download in progress
 
         # Fixed title: a second launch finds this window by it and brings it to the front.
@@ -430,12 +431,21 @@ class App:
     def toggle_steam_launch(self, game: steam.Game, var: tk.BooleanVar) -> None:
         want = var.get()
         var.set(not want)  # until it's done
+        if self._steam_toggling:  # one Steam restart at a time
+            self.set_status("Still updating Steam's launch options...")
+            return
         if steamcfg.steam_running() and not self.msg.askyesno(
                 "AutoCheatDeck", "Steam saves launch options only while it's closed, so it will close and open "
                 "again. Continue?", parent=self.root):
             return
 
+        self._steam_toggling = True
+
+        def finished() -> None:
+            self._steam_toggling = False
+
         def done(_: None) -> None:
+            finished()
             (self._steam_trainer_games.add if want else self._steam_trainer_games.discard)(game.appid)
             var.set(want)
             log.get().info("steam launch option for %s: %s", game.appid, "on" if want else "off")
@@ -443,7 +453,7 @@ class App:
                 game.name, "starts" if want else "no longer starts"))
 
         self.run_bg(lambda: steamcfg.set_trainer_with_game(game.appid, want, sys.executable), done,
-                    "Updating {}'s Steam launch options...".format(game.name))
+                    "Updating {}'s Steam launch options...".format(game.name), failed=finished)
 
     def _record_played(self, appids: set[str], when: int) -> None:
         played = self.cfg.data.setdefault("lastPlayed", {})
@@ -854,7 +864,8 @@ class App:
         def failed() -> None:
             self._updating = False
 
-        self.run_bg(lambda: updater.stage_update(self.app_dir), done, "Downloading update...", failed=failed)
+        self.run_bg(lambda: updater.stage_update(self.app_dir, __version__, info.get("release")), done,
+                    "Downloading update...", failed=failed)
 
     def rollback(self) -> None:
         if self._updating:
