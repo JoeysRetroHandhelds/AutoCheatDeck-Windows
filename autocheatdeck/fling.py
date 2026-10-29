@@ -36,8 +36,12 @@ def _get(url: str, referer: str | None = None) -> urllib.request.addinfourl:
     if referer:
         headers["Referer"] = referer
     request = urllib.request.Request(_check_url(url), headers=headers)
-    response = urllib.request.urlopen(request, timeout=30, context=tls.create_context())
-    _check_url(response.geturl())
+    response = tls.open_url(request, ALLOWED_HOSTS)
+    try:
+        _check_url(response.geturl())
+    except ValueError:
+        response.close()
+        raise
     return response
 
 
@@ -120,6 +124,12 @@ def _find_exe(directory: str) -> str | None:
     return None
 
 
+def file_name(url: str) -> str:
+    """The last part of the URL's path, decoded. Split after decoding, so an encoded slash or
+    backslash (%2F, %5C) can't lead outside the trainer's folder."""
+    return re.split(r"[\\/]", urllib.parse.unquote(urllib.parse.urlparse(url).path))[-1]
+
+
 def download(download_url: str, page_url: str, target_dir: str) -> dict:
     """Download a trainer into target_dir (replacing its contents) and return the exe path."""
     _check_url(page_url)
@@ -127,7 +137,7 @@ def download(download_url: str, page_url: str, target_dir: str) -> dict:
     tmp_path = target_dir + ".part"
     try:
         with _get(download_url, referer=page_url) as response:
-            final_name = urllib.parse.unquote(os.path.basename(urllib.parse.urlparse(response.geturl()).path))
+            final_name = file_name(response.geturl())
             digest = hashlib.sha256()
             size = 0
             with open(tmp_path, "wb") as out:

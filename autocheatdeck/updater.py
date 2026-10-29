@@ -68,7 +68,7 @@ def _check_url(url: str) -> None:
 def _open(url: str):
     _check_url(url)
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    response = urllib.request.urlopen(request, timeout=30, context=tls.create_context())
+    response = tls.open_url(request, ALLOWED_HOSTS)
     try:
         _check_url(response.geturl())
     except ValueError:
