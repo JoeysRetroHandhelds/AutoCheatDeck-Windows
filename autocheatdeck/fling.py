@@ -15,6 +15,7 @@ BASE_URL = "https://flingtrainer.com"
 ALLOWED_HOSTS = {"flingtrainer.com", "www.flingtrainer.com"}
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AutoCheatDeck-Windows"
 MAX_DOWNLOAD_BYTES = 200 * 1024 * 1024
+MAX_EXTRACTED_BYTES = 1024 * 1024 * 1024
 
 _TRAINER_LINK = re.compile(r'<a[^>]+href="(https://flingtrainer\.com/trainer/[^"#]+/)"[^>]*>([^<]+)</a>')
 _DOWNLOAD_LINK = re.compile(
@@ -165,6 +166,8 @@ def download(download_url: str, page_url: str, target_dir: str) -> dict:
                     dest = os.path.realpath(os.path.join(target_dir, member))
                     if not dest.startswith(root + os.sep):
                         raise ValueError("Unsafe path in archive: {}".format(member))
+                if sum(info.file_size for info in archive.infolist()) > MAX_EXTRACTED_BYTES:
+                    raise ValueError("Trainer archive unpacks too large")
                 archive.extractall(target_dir)
             exe_path = _find_exe(target_dir)
             if exe_path is None:

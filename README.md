@@ -44,7 +44,7 @@ If the controller isn't detected, the status line at the bottom says so, and `da
 ## Develop
 
 ```
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 python main.py
 python -m unittest discover -s tests -t .
 python -m PyInstaller --onedir --noconsole --name AutoCheatDeck main.py

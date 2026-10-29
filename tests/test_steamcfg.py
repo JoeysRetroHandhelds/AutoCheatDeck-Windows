@@ -115,7 +115,8 @@ class SteamTest(unittest.TestCase):
         quit_steam.assert_not_called()
         with open(self.path, encoding="utf-8", newline="") as f:
             self.assertEqual(f.read(), CONFIG)  # back to exactly what it was
-        self.assertTrue(os.path.isfile(self.path + ".autocheatdeck-backup"))
+        with open(self.path + ".autocheatdeck-backup", encoding="utf-8", newline="") as f:
+            self.assertEqual(f.read(), CONFIG)  # the backup is the file before the first change
         self.assertEqual(steamcfg.games_with_trainer(), set())
 
     def test_steam_is_closed_and_started_again(self):

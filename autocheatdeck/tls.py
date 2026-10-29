@@ -1,8 +1,7 @@
-"""SSL context that works under Decky's bundled Python.
+"""SSL context with certificate verification always on.
 
-Decky's PyInstaller build has no usable default CA path, so certificate checks fail with
-"unable to get local issuer certificate". Point it at the distro's bundle instead of
-turning verification off.
+Uses certifi's bundle when it is installed, else a Linux distro bundle (shared with the Decky
+plugin, whose bundled Python has no usable default CA path), else the system store (Windows).
 """
 
 import os

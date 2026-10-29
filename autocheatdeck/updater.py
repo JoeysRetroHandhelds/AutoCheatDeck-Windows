@@ -40,6 +40,7 @@ ALLOWED_HOSTS = {
 }
 USER_AGENT = "AutoCheatDeck-Windows-Updater"
 MAX_DOWNLOAD_BYTES = 300 * 1024 * 1024
+MAX_EXTRACTED_BYTES = 1024 * 1024 * 1024
 # Releases are signed in CI with the matching private key (tools/sign_release.py). The .sha256 only
 # catches a broken download; the signature is what proves the zip came from this project.
 PUBLIC_KEY = bytes.fromhex("056b3989bd5f6e3328bb05186cdc755f888961a1c2bde7cfc6445cc6b73afd6a")
@@ -109,7 +110,7 @@ def check(current_version: str) -> dict:
     release = latest_release()
     latest = release.get("tag_name", "")
     return {"current": current_version, "latest": latest, "available": is_newer(latest, current_version),
-            "notes": release.get("body") or ""}
+            "notes": release.get("body") or "", "release": release}
 
 
 # ---------- paths ----------
@@ -171,6 +172,8 @@ def _extract_app(zip_path: str, dest: str) -> str:
             target = os.path.realpath(os.path.join(dest, member))
             if target != root and not target.startswith(root + os.sep):
                 raise ValueError("Unsafe path in archive: {}".format(member))
+        if sum(info.file_size for info in archive.infolist()) > MAX_EXTRACTED_BYTES:
+            raise ValueError("Release zip unpacks too large")
         archive.extractall(dest)
     for dirpath, _dirs, files in os.walk(dest):
         if EXE_NAME in files:
@@ -181,11 +184,14 @@ def _extract_app(zip_path: str, dest: str) -> str:
     raise ValueError("Release zip does not contain {}".format(EXE_NAME))
 
 
-def stage_update(app_dir: str, release: dict | None = None) -> str:
-    """Download, verify and unpack the latest release into the staging folder. Returns its tag."""
+def stage_update(app_dir: str, current_version: str, release: dict | None = None) -> str:
+    """Download, verify and unpack a release (the one the user was shown, else the latest) into the
+    staging folder. Returns its tag. Never installs a version that isn't newer than the running one."""
     release = release or latest_release()
-    zip_url, sha_url, sig_url = pick_assets(release)
     tag = release.get("tag_name", "")
+    if not is_newer(tag, current_version):
+        raise ValueError("{} is not newer than {}; not installing it.".format(tag or "The release", current_version))
+    zip_url, sha_url, sig_url = pick_assets(release)
     work = update_dir(app_dir)
     os.makedirs(work, exist_ok=True)
     zip_path = os.path.join(work, "download.zip")

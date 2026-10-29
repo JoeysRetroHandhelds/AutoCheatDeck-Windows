@@ -6,19 +6,20 @@ on:
     tags: ['v*.*.*']
   pull_request:
 
+# Read-only by default; only the publish job (tag builds) can write to the repository.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
         with:
           python-version: '3.13'
       - name: Install tools
-        run: pip install pyinstaller flake8 pystray pillow cryptography
+        run: pip install -r requirements-dev.txt
       - name: Lint and test
         run: |
           flake8 --max-line-length=120 autocheatdeck main.py tests tools
@@ -26,10 +27,12 @@ jobs:
       - name: Check tag matches app version
         if: github.ref_type == 'tag'
         shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
           $version = python -c "import autocheatdeck; print(autocheatdeck.__version__)"
-          if ("v$version" -ne "${{ github.ref_name }}") { throw "Tag ${{ github.ref_name }} does not match __version__ $version" }
-          if (-not (Test-Path "docs/releases/${{ github.ref_name }}.md")) { throw "Write docs/releases/${{ github.ref_name }}.md first" }
+          if ("v$version" -ne $env:TAG) { throw "Tag $env:TAG does not match __version__ $version" }
+          if (-not (Test-Path "docs/releases/$env:TAG.md")) { throw "Write docs/releases/$env:TAG.md first" }
       - name: Build app folder
         run: python -m PyInstaller --onedir --noconsole --name AutoCheatDeck --clean -y main.py
       - name: Zip and checksum
@@ -44,14 +47,28 @@ jobs:
         if: github.ref_type == 'tag'
         env:
           RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
-        run: python tools/sign_release.py release/AutoCheatDeck-win64.zip ${{ github.ref_name }}
-      - uses: actions/upload-artifact@v6
+          TAG: ${{ github.ref_name }}
+        shell: pwsh
+        run: python tools/sign_release.py release/AutoCheatDeck-win64.zip $env:TAG
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f  # v6
         with:
           name: AutoCheatDeck-win64
           path: release/*
+
+  publish:
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131  # v7
+        with:
+          name: AutoCheatDeck-win64
+          path: release
       - name: Publish release
-        if: github.ref_type == 'tag'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2
         with:
           name: AutoCheatDeck ${{ github.ref_name }}
           body_path: docs/releases/${{ github.ref_name }}.md
@@ -60,4 +77,3 @@ jobs:
             release/AutoCheatDeck-win64.zip
             release/AutoCheatDeck-win64.zip.sha256
             release/AutoCheatDeck-win64.zip.sig
-

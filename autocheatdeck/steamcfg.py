@@ -172,10 +172,11 @@ def read(path: str) -> str:
 
 
 def write(path: str, text: str) -> None:
-    """Back up the current file, then replace it atomically."""
+    """Back up the file as Steam had it before AutoCheatDeck first changed it, then replace it atomically."""
     backup = path + ".autocheatdeck-backup"
-    with open(path, "rb") as src, open(backup, "wb") as dst:
-        dst.write(src.read())
+    if not os.path.exists(backup):  # a later change must not overwrite the original
+        with open(path, "rb") as src, open(backup, "wb") as dst:
+            dst.write(src.read())
     tmp = path + ".autocheatdeck-tmp"
     with open(tmp, "w", encoding="utf-8", errors="surrogateescape", newline="") as f:
         f.write(text)
