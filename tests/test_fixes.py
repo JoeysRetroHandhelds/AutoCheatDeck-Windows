@@ -53,6 +53,32 @@ class SafeReplaceTest(unittest.TestCase):
         self.assertEqual(result["path"], os.path.join(self.target, "New Trainer.exe"))
         self.assertEqual(sorted(os.listdir(os.path.dirname(self.target))), ["1"])
 
+    def test_encoded_path_separators_stay_in_the_folder(self):
+        self.assertEqual(fling.file_name("https://flingtrainer.com/x/..%5C..%5Cevil.exe"), "evil.exe")
+        self.assertEqual(fling.file_name("https://flingtrainer.com/x/..%2F..%2Fevil.exe"), "evil.exe")
+        self.assertEqual(fling.file_name("https://flingtrainer.com/x/New%20Trainer.exe"), "New Trainer.exe")
+
+    def test_redirect_to_another_host_is_refused(self):
+        from autocheatdeck import tls
+
+        handler = None
+
+        def capture(*handlers):
+            nonlocal handler
+            handler = handlers[0]
+            raise RuntimeError("stop")
+
+        with mock.patch.object(tls.urllib.request, "build_opener", side_effect=capture):
+            with self.assertRaises(RuntimeError):
+                tls.open_url(tls.urllib.request.Request(self.URL), fling.ALLOWED_HOSTS)
+        request = tls.urllib.request.Request(self.URL)
+        with self.assertRaisesRegex(ValueError, "Redirect not allowed"):
+            handler.redirect_request(request, None, 302, "Found", {}, "https://evil.example/t.exe")
+        with self.assertRaisesRegex(ValueError, "Redirect not allowed"):
+            handler.redirect_request(request, None, 302, "Found", {}, "http://flingtrainer.com/t.exe")
+        self.assertIsNotNone(handler.redirect_request(request, None, 302, "Found", {},
+                                                      "https://flingtrainer.com/t.exe"))
+
     def test_running_trainer_is_left_alone(self):
         with mock.patch.object(fling.os, "rename", side_effect=PermissionError("in use")):
             with self.assertRaisesRegex(ValueError, "Close the trainer"):
