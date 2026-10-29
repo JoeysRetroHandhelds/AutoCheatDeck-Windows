@@ -42,6 +42,8 @@ def open_url(request: urllib.request.Request, allowed_hosts: set[str], timeout: 
         def redirect_request(self, req, fp, code, msg, headers, newurl):
             parsed = urllib.parse.urlparse(newurl)
             if parsed.scheme != "https" or parsed.hostname not in allowed_hosts:
+                if fp is not None:
+                    fp.close()  # urllib only closes the redirect response when it follows it
                 raise ValueError("Redirect not allowed: {}".format(newurl))
             return super().redirect_request(req, fp, code, msg, headers, newurl)
 
