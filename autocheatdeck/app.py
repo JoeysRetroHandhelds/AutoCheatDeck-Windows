@@ -29,6 +29,20 @@ ACCENT_SOFT = "#dbe7fb"
 TITLE_FONT = ("Segoe UI Semibold", 15)
 
 
+COLUMNS = {"#0": "Game", "store": "Store", "trainer": "Trainer"}
+
+
+def sort_rows(rows: list, column: str, descending: bool) -> list:
+    """Sort (game, trainer mark) rows by a column. Blank trainer cells stay last either way."""
+    def text(row) -> str:
+        game, mark = row
+        return {"#0": game.name, "store": game.source, "trainer": mark}[column].lower()
+
+    by_name = sorted(rows, key=lambda row: row[0].name.lower())
+    ordered = sorted(by_name, key=text, reverse=descending)
+    return [r for r in ordered if text(r)] + [r for r in ordered if not text(r)]
+
+
 def launch_trainer(path: str) -> None:
     # ShellExecute (not CreateProcess) so trainers that require admin get their UAC prompt.
     os.startfile(path, "open", "", os.path.dirname(path))
@@ -253,9 +267,10 @@ class App:
 
         left = ttk.Frame(body)
         self.tree = ttk.Treeview(left, columns=("store", "trainer"), show="tree headings", selectmode="browse")
-        self.tree.heading("#0", text="Game")
-        self.tree.heading("store", text="Store")
-        self.tree.heading("trainer", text="Trainer")
+        self._sort: tuple[str, bool] | None = None  # (column, descending); None = most recently played
+        for column in COLUMNS:
+            self.tree.heading(column, command=lambda c=column: self._sort_by(c))
+        self._show_sort()
         self.tree.column("#0", width=self.px(300))
         self.tree.column("store", width=self.px(80), anchor="center", stretch=False)
         self.tree.column("trainer", width=self.px(130), anchor="center", stretch=False)
@@ -330,15 +345,12 @@ class App:
         self._select_after_load = None
         needle = self.search.get().strip().lower()
         self.tree.delete(*self.tree.get_children())
-        for game in self.games:
-            if needle and needle not in game.name.lower():
-                continue
-            entry = self.cfg.game(game.appid)
-            mark = ""
-            if entry and os.path.isfile(entry.get("path", "")):
-                mark = "Game updated" if library.game_updated(entry, game) else "Ready"
-            elif defender.trainer_missing(entry):
-                mark = "Missing"
+        rows = [(game, self._trainer_mark(game)) for game in self.games
+                if not needle or needle in game.name.lower()]
+        if self._sort:
+            column, descending = self._sort
+            rows = sort_rows(rows, column, descending)
+        for game, mark in rows:
             self.tree.insert("", "end", iid=game.appid, text=game.name, values=(game.source, mark))
         if not (selected and self.tree.exists(selected)):
             children = self.tree.get_children()
@@ -348,6 +360,30 @@ class App:
             self.tree.focus(selected)
             self.tree.see(selected)
         self._show_selected()
+
+    def _trainer_mark(self, game: steam.Game) -> str:
+        entry = self.cfg.game(game.appid)
+        if entry and os.path.isfile(entry.get("path", "")):
+            return "Game updated" if library.game_updated(entry, game) else "Ready"
+        return "Missing" if defender.trainer_missing(entry) else ""
+
+    def _sort_by(self, column: str) -> None:
+        """Click a heading: ascending, then descending, then back to most recently played."""
+        if not self._sort or self._sort[0] != column:
+            self._sort = (column, False)
+        elif not self._sort[1]:
+            self._sort = (column, True)
+        else:
+            self._sort = None
+        self._show_sort()
+        self._fill_list()
+
+    def _show_sort(self) -> None:
+        for column, title in COLUMNS.items():
+            arrow = ""
+            if self._sort and self._sort[0] == column:
+                arrow = " ▼" if self._sort[1] else " ▲"
+            self.tree.heading(column, text=title + arrow)
 
     def selected_appid(self) -> str | None:
         selection = self.tree.selection()

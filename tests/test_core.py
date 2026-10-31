@@ -238,3 +238,19 @@ class UpdaterTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SortRowsTest(unittest.TestCase):
+    def test_columns_sort_and_blanks_stay_last(self):
+        from types import SimpleNamespace as Game
+
+        from autocheatdeck.app import sort_rows
+
+        a, b, c = Game(name="Alpha", source="Xbox"), Game(name="beta", source="Steam"), Game(name="Cee", source="Steam")
+        rows = [(c, "Ready"), (a, ""), (b, "Missing")]
+        names = lambda result: [game.name for game, _ in result]  # noqa: E731
+        self.assertEqual(names(sort_rows(rows, "#0", False)), ["Alpha", "beta", "Cee"])
+        self.assertEqual(names(sort_rows(rows, "#0", True)), ["Cee", "beta", "Alpha"])
+        self.assertEqual(names(sort_rows(rows, "store", False)), ["beta", "Cee", "Alpha"])
+        self.assertEqual(names(sort_rows(rows, "trainer", False)), ["beta", "Cee", "Alpha"])
+        self.assertEqual(names(sort_rows(rows, "trainer", True)), ["Cee", "beta", "Alpha"])

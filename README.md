@@ -9,7 +9,7 @@ A portable app that finds [FLiNG](https://flingtrainer.com) trainers for your in
 3. Start your game, then press **Launch trainer** (or **X** on a controller). FLiNG trainers are built to run as administrator, so Windows may show a UAC prompt.
 4. Closing the window keeps AutoCheatDeck in the system tray; quit from the tray icon's menu. Opening AutoCheatDeck again (shortcut, Start menu, Xbox app) or clicking the tray icon shows the window.
 
-Games are listed most recently played first. The list includes Steam games, Xbox app / Game Pass games (installed in any Xbox games folder, on any drive), and anything you add with **Add game** (pick the game's .exe: DRM-free, GOG, Epic, emulators...). For Xbox and added games, "last played" is when you last launched their trainer.
+Games are listed most recently played first; click a column heading to sort by it (click again to reverse, a third time for the default order). The list includes Steam games, Xbox app / Game Pass games (installed in any Xbox games folder, on any drive), and anything you add with **Add game** (pick the game's .exe: DRM-free, GOG, Epic, emulators...). For Xbox and added games, "last played" is when you last launched their trainer.
 
 ### Start the trainer with a Steam game
 
