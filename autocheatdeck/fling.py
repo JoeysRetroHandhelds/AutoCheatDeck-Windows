@@ -15,6 +15,7 @@ BASE_URL = "https://flingtrainer.com"
 ALLOWED_HOSTS = {"flingtrainer.com", "www.flingtrainer.com"}
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AutoCheatDeck-Windows"
 MAX_DOWNLOAD_BYTES = 200 * 1024 * 1024
+MAX_EXTRACTED_BYTES = 1024 * 1024 * 1024
 
 _TRAINER_LINK = re.compile(r'<a[^>]+href="(https://flingtrainer\.com/trainer/[^"#]+/)"[^>]*>([^<]+)</a>')
 _DOWNLOAD_LINK = re.compile(
@@ -35,8 +36,12 @@ def _get(url: str, referer: str | None = None) -> urllib.request.addinfourl:
     if referer:
         headers["Referer"] = referer
     request = urllib.request.Request(_check_url(url), headers=headers)
-    response = urllib.request.urlopen(request, timeout=30, context=tls.create_context())
-    _check_url(response.geturl())
+    response = tls.open_url(request, ALLOWED_HOSTS)
+    try:
+        _check_url(response.geturl())
+    except ValueError:
+        response.close()
+        raise
     return response
 
 
@@ -119,6 +124,12 @@ def _find_exe(directory: str) -> str | None:
     return None
 
 
+def file_name(url: str) -> str:
+    """The last part of the URL's path, decoded. Split after decoding, so an encoded slash or
+    backslash (%2F, %5C) can't lead outside the trainer's folder."""
+    return re.split(r"[\\/]", urllib.parse.unquote(urllib.parse.urlparse(url).path))[-1]
+
+
 def download(download_url: str, page_url: str, target_dir: str) -> dict:
     """Download a trainer into target_dir (replacing its contents) and return the exe path."""
     _check_url(page_url)
@@ -126,7 +137,7 @@ def download(download_url: str, page_url: str, target_dir: str) -> dict:
     tmp_path = target_dir + ".part"
     try:
         with _get(download_url, referer=page_url) as response:
-            final_name = urllib.parse.unquote(os.path.basename(urllib.parse.urlparse(response.geturl()).path))
+            final_name = file_name(response.geturl())
             digest = hashlib.sha256()
             size = 0
             with open(tmp_path, "wb") as out:
@@ -165,6 +176,8 @@ def download(download_url: str, page_url: str, target_dir: str) -> dict:
                     dest = os.path.realpath(os.path.join(target_dir, member))
                     if not dest.startswith(root + os.sep):
                         raise ValueError("Unsafe path in archive: {}".format(member))
+                if sum(info.file_size for info in archive.infolist()) > MAX_EXTRACTED_BYTES:
+                    raise ValueError("Trainer archive unpacks too large")
                 archive.extractall(target_dir)
             exe_path = _find_exe(target_dir)
             if exe_path is None:

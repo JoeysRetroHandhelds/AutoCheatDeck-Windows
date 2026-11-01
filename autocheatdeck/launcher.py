@@ -29,7 +29,11 @@ def run(appid: str, command: list[str], start_trainer, sleep=time.sleep) -> int:
         return 1
     cfg = config.Config()
     logger.info("launch option: starting %s: %s", appid, command)
-    game = subprocess.Popen(command, cwd=os.path.dirname(command[0]) or None)
+    try:
+        game = subprocess.Popen(command, cwd=os.path.dirname(command[0]) or None)
+    except OSError:
+        logger.exception("launch option: could not start the game for %s", appid)
+        return 1
 
     entry = cfg.game(appid)
     path = entry.get("path", "") if entry else ""
@@ -38,7 +42,12 @@ def run(appid: str, command: list[str], start_trainer, sleep=time.sleep) -> int:
     else:
         # Start the trainer even if the first process already exited: many games go through a small
         # launcher that hands off to the real exe, and FLiNG trainers wait for the game themselves.
-        sleep(float(cfg.data.get("launchDelay", 5)))
+        try:
+            delay = float(cfg.data.get("launchDelay", 5))
+        except (TypeError, ValueError):
+            logger.warning("launch option: launchDelay %r is not a number; using 5", cfg.data.get("launchDelay"))
+            delay = 5.0
+        sleep(delay)
         try:
             start_trainer(path)
             logger.info("launch option: started trainer %s", path)

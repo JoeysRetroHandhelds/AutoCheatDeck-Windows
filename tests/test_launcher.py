@@ -43,6 +43,19 @@ class LauncherTest(unittest.TestCase):
 
         self.assertEqual(launcher.run("42", [sys.executable, "-c", "pass"], broken, lambda _: None), 0)
 
+    def test_bad_launch_delay_still_starts_trainer_and_waits_for_game(self):
+        cfg = config.Config()  # patched to self.cfg_path
+        cfg.data["launchDelay"] = "soon"
+        cfg.save()
+        started, slept = [], []
+        code = launcher.run("42", [sys.executable, "-c", "import sys; sys.exit(3)"], started.append, slept.append)
+        self.assertEqual((code, slept, started), (3, [5.0], [self.trainer]))
+
+    def test_game_that_cannot_start_returns_an_error(self):
+        started = []
+        code = launcher.run("42", [os.path.join(self.tmp.name, "missing.exe")], started.append, lambda _: None)
+        self.assertEqual((code, started), (1, []))
+
     def test_launch_option_text(self):
         self.assertEqual(launcher.launch_option(r"C:\Apps\AutoCheatDeck\AutoCheatDeck.exe", "42"),
                          r'"C:\Apps\AutoCheatDeck\AutoCheatDeck.exe" --run 42 %command%')

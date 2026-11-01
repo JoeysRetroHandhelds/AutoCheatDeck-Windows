@@ -174,7 +174,7 @@ class UpdaterTest(unittest.TestCase):
 
     def update_to(self, payload: bytes) -> None:
         with mock.patch.object(updater, "_open", fake_open(payload)):
-            self.assertEqual(updater.stage_update(self.app), "v1.1.0")
+            self.assertEqual(updater.stage_update(self.app, "1.0.0"), "v1.1.0")
         updater.finish(updater.staging_dir(self.app), self.app)
         updater.cleanup(self.app)
 
@@ -212,7 +212,7 @@ class UpdaterTest(unittest.TestCase):
         for payload, checksum in bad:
             with mock.patch.object(updater, "_open", fake_open(payload, checksum)):
                 with self.assertRaises(ValueError):
-                    updater.stage_update(self.app)
+                    updater.stage_update(self.app, "1.0.0")
             self.assert_version("1.0.0")
             self.assertFalse(os.path.exists(updater.staging_dir(self.app)))
 
@@ -222,13 +222,19 @@ class UpdaterTest(unittest.TestCase):
                        fake_open(payload, signed_tag="v1.0.5")):  # an older release re-tagged as newer
             with mock.patch.object(updater, "_open", opener):
                 with self.assertRaisesRegex(ValueError, "signature"):
-                    updater.stage_update(self.app)
+                    updater.stage_update(self.app, "1.0.0")
             self.assert_version("1.0.0")
             self.assertFalse(os.path.exists(updater.staging_dir(self.app)))
 
+    def test_release_that_is_not_newer_is_refused(self):
+        with mock.patch.object(updater, "_open", fake_open(make_zip("1.1.0"))):
+            with self.assertRaisesRegex(ValueError, "not newer"):
+                updater.stage_update(self.app, "1.1.0")
+        self.assertFalse(os.path.exists(updater.staging_dir(self.app)))
+
     def test_failed_copy_restores_old_files(self):
         with mock.patch.object(updater, "_open", fake_open(make_zip("1.1.0"))):
-            updater.stage_update(self.app)
+            updater.stage_update(self.app, "1.0.0")
         with mock.patch.object(updater.shutil, "copy2", side_effect=OSError("disk full")):
             with self.assertRaises(OSError):
                 updater.finish(updater.staging_dir(self.app), self.app)
